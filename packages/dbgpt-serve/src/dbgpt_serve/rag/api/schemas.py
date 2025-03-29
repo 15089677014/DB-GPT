@@ -118,6 +118,12 @@ class KnowledgeSyncRequest(BaseModel):
         None, description="chunk parameters"
     )
 
+    """chunk_parameters: chunk parameters 
+    """
+    model_field_set: Optional[set] = Field(
+        None, description="chunk parameters"
+    )
+
 
 class KnowledgeRetrieveRequest(BaseModel):
     """Retrieve request"""

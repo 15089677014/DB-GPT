@@ -5,6 +5,7 @@ from fastapi import (
     APIRouter,
     Depends,
     Form,
+    File,
     HTTPException,
     Query,
     UploadFile,
@@ -107,6 +108,29 @@ async def test_auth():
     """Test auth endpoint"""
     return {"status": "ok"}
 
+
+@router.post(
+    "/documents/auto_synchronous"
+)
+async def auto_synchronous(
+    knowledge_name: str = Form(...),
+    doc_name: str = Form(...),
+    data_type: str = Form(...),
+    file: UploadFile = File(...),
+    service: Service = Depends(get_service),
+) -> Result:
+    """Auto synchronous knowledge base.
+
+    Args:
+        knowledge_name: str, The name of the knowledge base.
+        doc_name: str, The name of the document.
+        data_type: str, The type of data.
+        file: UploadFile, The file to upload.
+        service: Service, The service instance.
+    Returns:
+        Result: The result of the operation.
+    """
+    return Result.succ(await service.auto_synchronous(knowledge_name, doc_name, data_type, file))
 
 @router.post("/spaces")
 async def create(
@@ -319,7 +343,7 @@ async def sync_documents(
     Returns:
         ServerResponse: The response
     """
-    return Result.succ(service.sync_document(requests))
+    return Result.succ(await service.sync_document(requests))
 
 
 @router.post("/documents/batch_sync")

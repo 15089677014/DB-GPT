@@ -327,6 +327,20 @@ class Client:
             json=args,
         )
 
+    async def post_file(self, path: str, data: dict, files: dict):
+        """Post method with file upload.
+
+        Args:
+            path: str, The path to post.
+            data: dict, The data to pass to the post
+            files: dict, The files to upload
+        """
+        return await self._http_client.post(
+            f"{self._api_url}/{CLIENT_SERVE_PATH}{path}",
+            data=data,
+            files=files,
+        )
+
     async def post_param(self, path: str, args):
         """Post method.
 

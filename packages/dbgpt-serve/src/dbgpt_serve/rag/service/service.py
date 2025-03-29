@@ -6,12 +6,12 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional, cast
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 
 from dbgpt.component import ComponentType, SystemApp
 from dbgpt.configs import TAG_KEY_KNOWLEDGE_FACTORY_DOMAIN_TYPE
 from dbgpt.configs.model_config import (
-    KNOWLEDGE_CACHE_ROOT_PATH,
+    KNOWLEDGE_CACHE_ROOT_PATH
 )
 from dbgpt.core import Chunk, LLMClient
 from dbgpt.core.interface.file import _SCHEMA, FileStorageClient
@@ -27,7 +27,7 @@ from dbgpt.util.string_utils import remove_trailing_punctuation
 from dbgpt.util.tracer import root_tracer, trace
 from dbgpt_app.knowledge.request.request import BusinessFieldType
 from dbgpt_ext.rag.assembler import EmbeddingAssembler
-from dbgpt_ext.rag.chunk_manager import ChunkParameters
+from dbgpt_ext.rag.chunk_manager import ChunkParameters, SplitterType
 from dbgpt_ext.rag.knowledge import KnowledgeFactory
 from dbgpt_serve.core import BaseService, blocking_func_to_async
 
@@ -524,8 +524,7 @@ class Service(BaseService[KnowledgeSpaceEntity, SpaceServeRequest, SpaceServeRes
         await blocking_func_to_async(
             self.system_app, self._document_dao.update_knowledge_document, doc
         )
-        asyncio.create_task(
-            self.async_doc_process(
+        await self.async_doc_process(
                 knowledge,
                 chunk_parameters,
                 storage_connector,
@@ -533,7 +532,6 @@ class Service(BaseService[KnowledgeSpaceEntity, SpaceServeRequest, SpaceServeRes
                 space,
                 knowledge_content,
             )
-        )
         logger.info(f"begin save document chunks, doc:{doc.doc_name}")
 
     @trace("async_doc_process")
@@ -658,3 +656,52 @@ class Service(BaseService[KnowledgeSpaceEntity, SpaceServeRequest, SpaceServeRes
         return await space_retriever.aretrieve_with_scores(
             request.query, request.score_threshold
         )
+
+
+    async def auto_synchronous(
+        self, knowledge_name: str, doc_name: str, data_type: str, file: UploadFile
+    ):
+        """Auto synchronous knowledge base.
+
+        Args:
+            knowledge_name: str, The name of the knowledge base.
+            doc_name: str, The name of the document.
+            data_type: str, The type of data.
+            file: UploadFile, The file to upload.
+        """
+        try:
+            space_id = str(self.get({"name": knowledge_name}).id)
+            for doc in self._document_dao.get_knowledge_documents(KnowledgeDocumentEntity(space=knowledge_name)):
+                self.delete_document(doc.id)
+                print(f"Deleted document: {doc.id}")
+
+            # 使用临时文件创建文档
+            doc_id = self.create_document(
+                DocumentServeRequest(
+                    space_id=space_id,
+                    doc_name=doc_name,
+                    doc_type="DOCUMENT",
+                    doc_file=file
+                )
+            )
+            # Sync document
+            await self.sync_document(
+                [KnowledgeSyncRequest(
+                    doc_id=int(doc_id),
+                    space_id=space_id,
+                    model_name=None,
+                    model_field_set={'chunk_parameters', 'doc_id', 'space_id'},
+                    chunk_parameters=ChunkParameters(
+                        chunk_strategy='CHUNK_BY_SEPARATOR',
+                        text_splitter=None,
+                        splitter_type=SplitterType.USER_DEFINE,
+                        chunk_size=512,
+                        chunk_overlap=50,
+                        separator='\\n',
+                        enable_merge=False
+                    )
+                )]
+            )
+            return {"status": "success", "message": f"Successfully synchronized {knowledge_name}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
