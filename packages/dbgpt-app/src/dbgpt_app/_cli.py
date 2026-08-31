@@ -5,24 +5,168 @@ from typing import Any, Dict, Optional
 import click
 
 from dbgpt.configs.model_config import LOGDIR
-from dbgpt.model.cli import add_start_server_options
 from dbgpt.util.command_utils import _run_current_with_daemon, _stop_service
 from dbgpt.util.i18n_utils import _
 
 _GLOBAL_CONFIG: str = ""
 
+_BANNER_ART = """\
+    ____  ____        ____ ____ _____
+   |  _ \\| __ )      / ___|  _ \\_   _|
+   | | | |  _ \\ ____| |  _| |_) || |
+   | |_| | |_) |____| |_| |  __/ | |
+   |____/|____/      \\____|_|    |_|\
+"""
+
+
+def _print_banner() -> None:
+    """Print the DB-GPT ASCII art banner to the terminal."""
+    from dbgpt.util.console.console import CliLogger
+
+    _log = CliLogger()
+    _log.print(f"[bold green]{_BANNER_ART}[/bold green]")
+    _log.print("")
+    _log.print("   [dim]🚀 DB-GPT Quick Start[/dim]")
+    _log.print("")
+
+
+def _add_webserver_start_options(func):
+    """Click options decorator for the webserver start command.
+
+    Unlike the generic ``add_start_server_options``, ``--config`` here is
+    *optional* so that users can rely on ``--profile`` / wizard flow instead.
+    """
+
+    @click.option(
+        "-c",
+        "--config",
+        type=str,
+        required=False,
+        default=None,
+        help=_(
+            "Path to a TOML config file.  If omitted, DB-GPT will use the active "
+            "profile from ~/.dbgpt/ or run the first-time setup wizard."
+        ),
+    )
+    @click.option(
+        "-p",
+        "--profile",
+        type=str,
+        required=False,
+        default=None,
+        help=_(
+            "Name of the provider profile to use (openai / kimi / qwen / minimax / "
+            "deepseek / ollama).  Overrides the active profile in ~/.dbgpt/config.toml."
+        ),
+    )
+    @click.option(
+        "-y",
+        "--yes",
+        is_flag=True,
+        default=False,
+        help=_(
+            "Non-interactive mode: skip the setup wizard and use defaults / "
+            "environment variables.  Useful for CI/CD and scripted installs."
+        ),
+    )
+    @click.option(
+        "--api-key",
+        type=str,
+        required=False,
+        default=None,
+        envvar="DBGPT_API_KEY",
+        help=_(
+            "API key for the chosen provider.  Can also be set via the provider's "
+            "own environment variable (e.g. OPENAI_API_KEY)."
+        ),
+    )
+    @click.option(
+        "-d",
+        "--daemon",
+        is_flag=True,
+        help=_(
+            "Run in daemon mode. It will run in the background. If you want to stop"
+            " it, use `dbgpt stop` command"
+        ),
+    )
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
 
 @click.command(name="webserver")
-@add_start_server_options
-def start_webserver(config: str, **kwargs):
-    """Start webserver(dbgpt_server.py)"""
-    if kwargs["daemon"]:
+@_add_webserver_start_options
+def start_webserver(
+    config: Optional[str],
+    profile: Optional[str],
+    yes: bool,
+    api_key: Optional[str],
+    **kwargs,
+):
+    """Start webserver (dbgpt_server.py).
+
+    On first run (or when no config is found) DB-GPT will launch an
+    interactive setup wizard so you can choose your LLM provider and API key.
+    Use ``--yes`` to skip the wizard in non-interactive environments.
+    """
+    # Print banner first — skip in daemon mode (output goes to a log file)
+    if not kwargs.get("daemon"):
+        _print_banner()
+
+    if kwargs.get("daemon"):
         log_file = os.path.join(LOGDIR, "webserver_uvicorn.log")
         _run_current_with_daemon("WebServer", log_file)
-    else:
-        from dbgpt_app.dbgpt_server import run_webserver
+        return
 
-        run_webserver(config)
+    # Resolve (or create) a config file via the wizard if needed
+    try:
+        from dbgpt.cli._wizard import maybe_run_wizard
+
+        resolved_config = maybe_run_wizard(
+            profile=profile,
+            config=config,
+            yes=yes,
+            api_key=api_key,
+        )
+    except ImportError:
+        # Graceful fallback: if wizard module is somehow unavailable, require --config
+        if not config:
+            raise click.UsageError(
+                "No config file found. Please pass --config or run `dbgpt setup`."
+            )
+        resolved_config = config
+
+    from pathlib import Path
+
+    from dbgpt.cli._config import dbgpt_home
+    from dbgpt.util.console.console import CliLogger
+
+    _log = CliLogger()
+    _profile = Path(resolved_config).stem
+    _workspace = dbgpt_home() / "workspace"
+    _log.print("")
+    _info_lines = [
+        ("Profile:   ", str(_profile)),
+        ("Config:    ", str(resolved_config)),
+        ("Workspace: ", str(_workspace)),
+    ]
+    _max_len = max(len(f"  {lbl}{val}") for lbl, val in _info_lines)
+    _inner_w = _max_len + 2  # 1 space padding each side
+    _dash_line = "- " * ((_inner_w + 1) // 2)
+    _dash_line = _dash_line[:_inner_w]  # trim to exact width
+    _log.print(f"   +{_dash_line}+", highlight=False)
+    for _lbl, _val in _info_lines:
+        _content = f"  {_lbl}[bold]{_val}[/bold]"
+        _pad = _max_len - len(f"  {_lbl}{_val}")
+        _log.print(f"   : {_content}{' ' * _pad} :", highlight=False)
+    _log.print(f"   +{_dash_line}+", highlight=False)
+    _log.print("")
+
+    from dbgpt_app.dbgpt_server import run_webserver
+
+    run_webserver(resolved_config)
 
 
 @click.command(name="webserver")
@@ -312,6 +456,12 @@ def _get_migration_config(
     default_meta_data_path = _initialize_db(
         db_url, "sqlite", db_name, db_engine_args, try_to_create_db=True
     )
+    from dbgpt_app.initialization.workspace_provisioning import _ensure_pilot_workspace
+
+    # Provision pilot workspace template files for pip-installed users.
+    # dest_root is the parent of meta_data/ (e.g. ~/.dbgpt/workspace/pilot/)
+    pilot_root = os.path.dirname(default_meta_data_path)
+    _ensure_pilot_workspace(pilot_root)
     alembic_cfg = create_alembic_config(
         default_meta_data_path,
         db_manager.engine,

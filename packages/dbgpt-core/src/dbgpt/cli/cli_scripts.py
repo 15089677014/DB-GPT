@@ -34,10 +34,17 @@ def add_command_alias(command, name: str, hidden: bool = False, parent_group=Non
     parent_group.add_command(new_command, name=name)
 
 
-@click.group()
-def start():
+@click.group(invoke_without_command=True)
+@click.pass_context
+def start(ctx):
     """Start specific server."""
-    pass
+    if ctx.invoked_subcommand is None:
+        # Try web first, then webserver as fallback
+        cmd = start.commands.get("web") or start.commands.get("webserver")
+        if cmd:
+            ctx.invoke(cmd)
+        else:
+            click.echo(ctx.get_help())
 
 
 @click.group()
@@ -93,6 +100,99 @@ def tool():
     """DB-GPT Tools."""
 
 
+# ---------------------------------------------------------------------------
+# dbgpt setup
+# ---------------------------------------------------------------------------
+
+
+@click.command(name="setup")
+@click.option(
+    "-p",
+    "--profile",
+    type=str,
+    required=False,
+    default=None,
+    help=(
+        "Provider profile to configure: openai / kimi / qwen / minimax / "
+        "deepseek / ollama.  If omitted, an interactive menu is shown."
+    ),
+)
+@click.option(
+    "-y",
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Non-interactive: skip wizard and use defaults / env variables.",
+)
+@click.option(
+    "--api-key",
+    type=str,
+    required=False,
+    default=None,
+    envvar="DBGPT_API_KEY",
+    help="API key for the chosen provider.",
+)
+@click.option(
+    "--show",
+    is_flag=True,
+    default=False,
+    help="Show the current active profile and config path, then exit.",
+)
+def setup_command(profile: str, yes: bool, api_key: str, show: bool):
+    """Configure DB-GPT's LLM provider and write ~/.dbgpt/configs/<profile>.toml.
+
+    Run without arguments for an interactive wizard, or use --yes for
+    non-interactive / CI usage.
+
+    \b
+    Examples:
+      dbgpt setup                          # interactive wizard
+      dbgpt setup --profile openai --yes  # use OPENAI_API_KEY from env
+      dbgpt setup --profile kimi --api-key sk-xxx
+      dbgpt setup --show                   # print current config
+    """
+    try:
+        from dbgpt.cli._config import (
+            profile_config_path,
+            read_active_profile,
+        )
+        from dbgpt.cli._wizard import run_setup_noninteractive, run_setup_wizard
+        from dbgpt.util.console.console import CliLogger
+
+        cl = CliLogger()
+
+        if show:
+            active = read_active_profile()
+            if active:
+                path = profile_config_path(active)
+                cl.info(f"Active profile : [bold]{active}[/bold]")
+                cl.info(f"Config file    : {path}")
+                if not path.exists():
+                    cl.warning("  ⚠ Config file does not exist yet. Run `dbgpt setup`.")
+            else:
+                cl.warning("No profile configured yet. Run `dbgpt setup`.")
+            return
+
+        if yes:
+            run_setup_noninteractive(
+                profile_name=profile or "openai",
+                api_key=api_key,
+            )
+        else:
+            run_setup_wizard(
+                pre_selected_profile=profile,
+                pre_set_key=api_key,
+            )
+
+    except ImportError as e:
+        logger.warning(f"Setup wizard unavailable: {e}")
+        raise click.ClickException(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Stop all
+# ---------------------------------------------------------------------------
+
 stop_all_func_list = []
 
 
@@ -102,6 +202,17 @@ def stop_all():
     for stop_func in stop_all_func_list:
         stop_func()
 
+
+@click.command(name="none")
+def start_none():
+    """Start DB-GPT in API-only mode (no web UI). [Planned]"""
+    click.echo(
+        "API-only mode (no web UI) is planned for a future release.\n"
+        "For now, use: dbgpt start web"
+    )
+
+
+start.add_command(start_none)
 
 cli.add_command(start)
 cli.add_command(stop)
@@ -113,6 +224,10 @@ cli.add_command(repo)
 cli.add_command(run)
 cli.add_command(net)
 cli.add_command(tool)
+cli.add_command(setup_command)
+from dbgpt.cli._profile_cmd import profile as profile_cmd  # noqa: E402
+
+cli.add_command(profile_cmd, name="profile")
 add_command_alias(stop_all, name="all", parent_group=stop)
 
 try:
@@ -149,6 +264,7 @@ try:
     )
 
     add_command_alias(start_webserver, name="webserver", parent_group=start)
+    add_command_alias(start_webserver, name="web", parent_group=start)
     add_command_alias(stop_webserver, name="webserver", parent_group=stop)
     # Add migration command
     add_command_alias(migration, name="migration", parent_group=db)

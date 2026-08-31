@@ -1,6 +1,6 @@
 [project]
 name = "dbgpt-mono"
-version = "0.7.1"
+version = "0.8.2"
 description = """DB-GPT is an experimental open-source project that uses localized GPT \
 large models to interact with your data and environment. With this solution, you can be\
  assured that there is no risk of data leakage, and your data is 100% private and secure.\
@@ -20,6 +20,7 @@ dbgpt-serve = { workspace = true }
 dbgpt-app = { workspace = true }
 dbgpt-acc-auto = { workspace = true }
 dbgpt-acc-flash-attn = { workspace = true }
+dbgpt-sandbox = { workspace = true }
 
 [[tool.uv.index]]
 name = "testpypi"
@@ -34,6 +35,7 @@ members = [
   "packages/dbgpt-core",
   "packages/dbgpt-ext",
   "packages/dbgpt-serve",
+  "packages/dbgpt-sandbox",
   "packages/dbgpt-accelerator/dbgpt-acc*",
 ]
 
@@ -80,4 +82,10 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.isort]
 # Specify the local modules (first-party)
-known-first-party = ["dbgpt", "dbgpt_acc_auto", "dbgpt_client", "dbgpt_ext", "dbgpt_serve", "dbgpt_app"]
+known-first-party = ["dbgpt", "dbgpt_acc_auto", "dbgpt_client", "dbgpt_ext", "dbgpt_serve", "dbgpt_app", "dbgpt_sandbox"]
+
+[tool.ruff.lint.per-file-ignores]
+# These files embed long prompt templates / CSS / JS that cannot be wrapped
+# at 88 cols without breaking the rendered text:
+"packages/dbgpt-app/src/dbgpt_app/openapi/api_v1/agentic_data_api.py" = ["E501"]
+"packages/dbgpt-ext/src/dbgpt_ext/rag/graph_builder/codegraph_visualizer.py" = ["E501"]

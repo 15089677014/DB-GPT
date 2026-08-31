@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from dbgpt.core import LLMClient
 from dbgpt.util.annotations import PublicAPI
@@ -101,6 +101,7 @@ class Agent(ABC):
         messages: List[AgentMessage],
         sender: Optional[Agent] = None,
         prompt: Optional[str] = None,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Think and reason about the current task goal.
 
@@ -202,7 +203,7 @@ class AgentContext:
     language: Optional[str] = None
     max_chat_round: int = 100
     max_retry_round: int = 10
-    max_new_tokens: int = 1024
+    max_new_tokens: int = 4096
     temperature: float = 0.5
     allow_format_str_template: Optional[bool] = False
     verbose: bool = False
@@ -210,6 +211,28 @@ class AgentContext:
     app_link_start: bool = False
     # 是否开启VIS协议消息模式，默认开启
     enable_vis_message: bool = True
+
+    # Working directory for this conversation; snapshot files are written here.
+    # If None, falls back to DBGPT_HOME/workspace/op_snapshots.
+    output_dir: Optional[str] = None
+
+    # Multi-layer context management (opt-in)
+    enable_context_management: bool = False
+    max_context_tokens: int = 120000
+    context_warning_threshold: float = 0.70
+    context_error_threshold: float = 0.90
+
+    # ReAct agent enhancement switches (opt-in, default off so the legacy
+    # ReActAgent and its text protocol behave exactly as before).
+    # Stage 1: execute multiple tool calls from a single model turn in
+    # parallel instead of enforcing one action per round.
+    enable_parallel_tool_execution: bool = False
+    # Stage 1: classify errors and drive retry / model failover on categories
+    # instead of the coarse fail_reason feedback loop.
+    enable_agent_error_classification: bool = False
+    # Stage 2: use provider-native function calling (tools= array) instead of
+    # the text Thought:/Action: protocol. Requires model-layer support.
+    enable_native_function_calling: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a dictionary representation of the AgentContext."""

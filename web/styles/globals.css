@@ -1,4 +1,5 @@
 @import './katex-override.css';
+@import './opencode-theme.css';
 
 @tailwind base;
 @tailwind components;
@@ -89,6 +90,44 @@ body {
   }
 }
 
+@keyframes scale-in {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out;
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+.animation-iteration-count-1 {
+  animation-iteration-count: 1;
+}
+
 .react-flow__panel {
   display: none !important;
 }
@@ -110,6 +149,44 @@ pre {
   overflow: auto;
   white-space: pre-wrap;
   padding-left: 0.5rem;
+}
+
+/* Floating buttons z-index system */
+.z-float-helper {
+  z-index: 997;
+}
+
+.z-prompt-bot {
+  z-index: 998;
+}
+
+.z-scroll-buttons {
+  z-index: 999;
+}
+
+/* Responsive floating button layout */
+@media (max-width: 768px) {
+  .float-button-container {
+    right: 1rem !important;
+    gap: 0.5rem;
+  }
+  
+  .float-button-container button {
+    width: 2.25rem !important;
+    height: 2.25rem !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .float-button-container {
+    right: 1.5rem !important;
+    gap: 0.5rem;
+  }
+  
+  .float-button-container button {
+    width: 2.5rem !important;
+    height: 2.5rem !important;
+  }
 }
 
 table {

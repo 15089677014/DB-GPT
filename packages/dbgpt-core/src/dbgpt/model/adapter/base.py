@@ -223,6 +223,12 @@ class LLMModelAdapter(ABC):
         """Load model and tokenizer"""
         raise NotImplementedError
 
+    def model_patch(
+        self, deploy_model_params: LLMDeployModelParameters
+    ) -> Optional[Callable[[Any], Any]]:
+        """Patch function for model"""
+        return None
+
     def parse_max_length(self, model, tokenizer) -> Optional[int]:
         """Parse the max_length of the model.
 
@@ -264,14 +270,18 @@ class LLMModelAdapter(ABC):
         ):
             return True
         return (
-            lower_model_name_or_path
-            and "deepseek" in lower_model_name_or_path
-            and (
-                "r1" in lower_model_name_or_path
-                or "reasoning" in lower_model_name_or_path
-                or "reasoner" in lower_model_name_or_path
+            (
+                lower_model_name_or_path
+                and "deepseek" in lower_model_name_or_path
+                and (
+                    "r1" in lower_model_name_or_path
+                    or "reasoning" in lower_model_name_or_path
+                    or "reasoner" in lower_model_name_or_path
+                )
             )
-        ) or (lower_model_name_or_path and "qwq" in lower_model_name_or_path)
+            or (lower_model_name_or_path and "qwq" in lower_model_name_or_path)
+            or (lower_model_name_or_path and "qwen3" in lower_model_name_or_path)
+        )
 
     def support_async(self) -> bool:
         """Whether the loaded model supports asynchronous calls"""
@@ -371,6 +381,7 @@ class LLMModelAdapter(ABC):
         messages: List[ModelMessage],
         convert_to_compatible_format: bool = False,
         support_media_content: bool = True,
+        type_mapping: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, str]]:
         """Transform the model messages
 
@@ -404,19 +415,23 @@ class LLMModelAdapter(ABC):
         if not self.support_system_message and convert_to_compatible_format:
             # We will not do any transform in the future
             return self._transform_to_no_system_messages(
-                messages, support_media_content=support_media_content
+                messages,
+                support_media_content=support_media_content,
+                type_mapping=type_mapping,
             )
         else:
             return ModelMessage.to_common_messages(
                 messages,
                 convert_to_compatible_format=convert_to_compatible_format,
                 support_media_content=support_media_content,
+                type_mapping=type_mapping,
             )
 
     def _transform_to_no_system_messages(
         self,
         messages: List[ModelMessage],
         support_media_content: bool = True,
+        type_mapping: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, str]]:
         """Transform the model messages to no system messages
 
@@ -444,7 +459,9 @@ class LLMModelAdapter(ABC):
             List[Dict[str, str]]: The transformed model messages
         """
         openai_messages = ModelMessage.to_common_messages(
-            messages, support_media_content=support_media_content
+            messages,
+            support_media_content=support_media_content,
+            type_mapping=type_mapping,
         )
         system_messages = []
         return_messages = []

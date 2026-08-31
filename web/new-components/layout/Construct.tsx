@@ -1,11 +1,12 @@
 import { ModelSvg } from '@/components/icons';
 import Icon, {
+  ApiOutlined,
   AppstoreOutlined,
-  BuildOutlined,
+  ClockCircleOutlined,
   ConsoleSqlOutlined,
   ForkOutlined,
-  MessageOutlined,
   PartitionOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { ConfigProvider, Tabs } from 'antd';
 import { t } from 'i18next';
@@ -13,7 +14,7 @@ import { useRouter } from 'next/router';
 import React from 'react';
 import './style.css';
 
-function ConstructLayout({ children }: { children: React.ReactNode }) {
+function ConstructLayout({ children, className }: { children: React.ReactNode; className?: string }) {
   const items = [
     {
       key: 'app',
@@ -61,17 +62,35 @@ function ConstructLayout({ children }: { children: React.ReactNode }) {
     //   icon: <BuildOutlined />,
     // },
     {
-      key: 'prompt',
-      name: t('Prompt'),
-      icon: <MessageOutlined />,
-      path: '/prompt',
+      key: 'skills',
+      name: t('skills') || '技能',
+      path: '/skills',
+      icon: <ThunderboltOutlined />,
     },
     {
-      key: 'dbgpts',
-      name: t('dbgpts_community'),
-      path: '/dbgpts',
-      icon: <BuildOutlined />,
+      key: 'connectors',
+      name: t('connectors'),
+      icon: <ApiOutlined />,
+      path: '/connectors',
     },
+    {
+      key: 'scheduled-tasks',
+      name: t('scheduled_tasks'),
+      icon: <ClockCircleOutlined />,
+      path: '/scheduled-tasks',
+    },
+    // {
+    //   key: 'prompt',
+    //   name: t('Prompt'),
+    //   icon: <MessageOutlined />,
+    //   path: '/prompt',
+    // },
+    // {
+    //   key: 'dbgpts',
+    //   name: t('dbgpts_community'),
+    //   path: '/dbgpts',
+    //   icon: <BuildOutlined />,
+    // },
   ];
   const router = useRouter();
   const activeKey = router.pathname.split('/')[2];
@@ -93,6 +112,7 @@ function ConstructLayout({ children }: { children: React.ReactNode }) {
         }}
       >
         <Tabs
+          className={className}
           // tabBarStyle={{
           //   background: '#edf8fb',
           //   border: 'none',

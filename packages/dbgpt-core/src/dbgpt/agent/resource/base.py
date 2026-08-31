@@ -44,6 +44,7 @@ class ResourceType(str, Enum):
     Knowledge = "knowledge"
     Internet = "internet"
     Tool = "tool"
+    Skill = "skill"
     Plugin = "plugin"
     TextFile = "text_file"
     ExcelFile = "excel_file"
@@ -54,6 +55,7 @@ class ResourceType(str, Enum):
     App = "app"
     # Resource type for resource pack
     Pack = "pack"
+    Connector = "connector"
 
 
 @dataclasses.dataclass

@@ -35,14 +35,14 @@ def create_alembic_config(
     alembic_ini_path = alembic_ini_path or os.path.join(
         alembic_root_path, "alembic.ini"
     )
-    alembic_cfg = AlembicConfig(alembic_ini_path)
-    alembic_cfg.set_main_option("sqlalchemy.url", str(engine.url))
     script_location = script_location or os.path.join(alembic_root_path, "alembic")
     versions_dir = os.path.join(script_location, "versions")
 
     os.makedirs(script_location, exist_ok=True)
     os.makedirs(versions_dir, exist_ok=True)
 
+    alembic_cfg = AlembicConfig(alembic_ini_path)
+    alembic_cfg.set_main_option("sqlalchemy.url", str(engine.url))
     alembic_cfg.set_main_option("script_location", script_location)
 
     alembic_cfg.attributes["target_metadata"] = base.metadata

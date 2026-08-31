@@ -108,3 +108,7 @@ After that, you can use it to build your APP according to [App Manage](./apps/ap
 - [AWEL](../awel/awel.md)
 - [AWEL CookBook](../awel/cookbook/)
 - [AWEL Tutorial](../awel/tutorial/)
+
+---
+
+📖 Want to learn more about AWEL? Check out the [AWEL Tutorial](../awel/tutorial/) for step-by-step guides from basics to advanced patterns.

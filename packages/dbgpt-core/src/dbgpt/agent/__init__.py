@@ -19,7 +19,17 @@ from .core.plan import *  # noqa: F401, F403
 from .core.profile import *  # noqa: F401, F403
 from .core.schema import PluginStorageType  # noqa: F401
 from .core.user_proxy_agent import UserProxyAgent  # noqa: F401
+from .middleware.agent import (  # noqa: F401
+    AgentConfig,
+    MiddlewareAgent,
+    create_middleware_agent,
+)
+from .middleware.base import (  # noqa: F401
+    AgentMiddleware,
+    MiddlewareManager,
+)
 from .resource.base import AgentResource, Resource, ResourceType  # noqa: F401
+from .skill.middleware_v2 import SkillsMiddlewareV2  # noqa: F401
 from .util.llm.llm import LLMConfig  # noqa: F401
 
 __ALL__ = [
@@ -39,4 +49,10 @@ __ALL__ = [
     "ResourceType",
     "PluginStorageType",
     "UserProxyAgent",
+    "AgentConfig",
+    "MiddlewareAgent",
+    "create_middleware_agent",
+    "AgentMiddleware",
+    "MiddlewareManager",
+    "SkillsMiddlewareV2",
 ]

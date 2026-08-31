@@ -146,12 +146,15 @@ nltk_data
 pilot/data/
 pilot/nltk_data
 pilot/mock_datas/db-gpt-test.db.wal
+pilot/tmp/
 
 logswebserver.log.*
 .history/*
 .plugin_env
 /pilot/meta_data/alembic/versions/*
 /pilot/meta_data/*.db
+/pilot/benchmark_meta_data/*.db
+/pilot/benchmark_meta_data/result/*
 # Ignore for now
 thirdparty
 
@@ -189,3 +192,24 @@ thirdparty
 configs/my
 .devcontainer/dev.toml
 test_docs
+
+# AI coding assistant configs
+.opencode/
+.cursor/
+.aone_copilot/
+.windsurf/
+.continue/
+.codeium/
+.github/copilot-instructions.md
+.claude/
+.codex/
+.trade/
+.qoder/
+.qwencode/
+.sisyphus/
+.omc/
+.playwright-mcp/
+.superpowers/
+openspec/
+docs/superpowers/
+.gstack/

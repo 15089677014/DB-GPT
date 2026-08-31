@@ -99,8 +99,10 @@ class ComponentType(str, Enum):
     RAG_STORAGE_MANAGER = "dbgpt_rag_storage_manager"
     AGENT_MANAGER = "dbgpt_agent_manager"
     RESOURCE_MANAGER = "dbgpt_resource_manager"
+    SKILL_MANAGER = "dbgpt_skill_manager"
     VARIABLES_PROVIDER = "dbgpt_variables_provider"
     FILE_STORAGE_CLIENT = "dbgpt_file_storage_client"
+    BENCHMARK_DATA_MANAGER = "dbgpt_benchmark_data_manager"
 
 
 _EMPTY_DEFAULT_COMPONENT = "_EMPTY_DEFAULT_COMPONENT"

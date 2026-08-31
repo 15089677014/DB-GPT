@@ -35,6 +35,11 @@ export const MODEL_ICON_INFO: Record<string, ModelIconInfo> = {
     icon: '/models/moonshot.png',
     patterns: ['moonshot', 'kimi'],
   },
+  minimax: {
+    label: 'MiniMax',
+    icon: '/models/minimax.png',
+    patterns: ['minimax', 'm3', 'm2.7'],
+  },
   doubao: {
     label: 'Doubao',
     icon: '/models/doubao.png',
@@ -59,6 +64,11 @@ export const MODEL_ICON_INFO: Record<string, ModelIconInfo> = {
     label: 'Vicuna',
     icon: '/models/vicuna.jpeg',
     patterns: ['vicuna'],
+  },
+  'glm-4': {
+    label: 'GLM-4.7',
+    icon: '/models/glm4.png',
+    patterns: ['glm-4'],
   },
   chatglm: {
     label: 'ChatGLM',
@@ -295,6 +305,16 @@ export const dbMapper: Record<DBType, { label: string; icon: string; desc: strin
     icon: '/icons/postgresql.png',
     desc: 'Powerful open-source relational database with extensibility and SQL standards.',
   },
+  gaussdb: {
+    label: 'GaussDB',
+    icon: '/icons/gaussdb.png',
+    desc: "Huawei's distributed database with PostgreSQL compatibility",
+  },
+  openGauss: {
+    label: 'openGauss',
+    icon: '/icons/opengauss.png',
+    desc: 'Open-source relational database with PostgreSQL compatibility.',
+  },
   vertica: {
     label: 'Vertica',
     icon: '/icons/vertica.png',
@@ -302,10 +322,20 @@ export const dbMapper: Record<DBType, { label: string; icon: string; desc: strin
   },
   spark: { label: 'Spark', icon: '/icons/spark.png', desc: 'Unified engine for large-scale data analytics.' },
   hive: { label: 'Hive', icon: '/icons/hive.png', desc: 'A distributed fault-tolerant data warehouse system.' },
+  maxcompute: {
+    label: 'MaxCompute',
+    icon: '/icons/maxcompute.png',
+    desc: 'Alibaba Cloud fully managed, large-scale data warehouse service for batch analytics.',
+  },
   space: { label: 'Space', icon: '/icons/knowledge.png', desc: 'knowledge analytics.' },
   tugraph: {
     label: 'TuGraph',
     icon: '/icons/tugraph.png',
     desc: 'TuGraph is a high-performance graph database jointly developed by Ant Group and Tsinghua University.',
+  },
+  neo4j: {
+    label: 'Neo4j',
+    icon: '/icons/neo4j.png',
+    desc: 'Neo4j is a highly scalable native graph database, purpose-built to leverage data relationships.',
   },
 };

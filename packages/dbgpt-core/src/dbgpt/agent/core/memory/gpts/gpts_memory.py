@@ -180,6 +180,8 @@ class GptsMemory:
 
     async def _message_group_vis_build(self, message_group, vis_items: list):
         num: int = 0
+        terminate_content = None  # Store terminate output for pure text display
+
         if message_group:
             last_goal = next(reversed(message_group))
             last_goal_message = None
@@ -187,16 +189,46 @@ class GptsMemory:
                 last_goal_messages = message_group[last_goal]
                 last_goal_message = last_goal_messages[-1]
 
+                # Check if the last message is a terminate action
+                if last_goal_message and last_goal_message.action_report:
+                    try:
+                        action_out = ActionOutput.from_dict(
+                            json.loads(last_goal_message.action_report)
+                        )
+                        if action_out and action_out.terminate:
+                            # Extract terminate content for pure text display
+                            terminate_content = (
+                                action_out.content
+                                or action_out.view
+                                or "Task completed"
+                            )
+                            # Don't show the last goal message in agents vis
+                            # (it will be shown as text)
+                            last_goal_message = None
+                    except Exception:
+                        pass  # If parsing fails, treat as normal message
+
             plan_temps: List[dict] = []
             need_show_singe_last_message = False
-            for key, value in message_group.items():
+
+            # Get all keys to identify the last one
+            message_keys = list(message_group.keys())
+
+            for idx, key in enumerate(message_keys):
+                is_last = idx == len(message_keys) - 1
+                value = message_group[key]
                 num = num + 1
+
                 if key.startswith(NONE_GOAL_PREFIX):
                     vis_items.append(await self._messages_to_plan_vis(plan_temps))
                     plan_temps = []
                     num = 0
                     vis_items.append(await self._messages_to_agents_vis(value))
                 else:
+                    # Skip the last plan item if it was a terminate action
+                    if is_last and terminate_content:
+                        continue
+
                     num += 1
                     plan_temps.append(
                         {
@@ -215,6 +247,11 @@ class GptsMemory:
                 vis_items.append(
                     await self._messages_to_agents_vis([last_goal_message], True)
                 )
+
+            # If there was a terminate action, append its content as pure text
+            if terminate_content:
+                vis_items.append(terminate_content)
+
         return "\n".join(vis_items)
 
     async def agent_stream_message(
@@ -252,7 +289,34 @@ class GptsMemory:
     async def _plan_vis_build(self, plan_group: dict[str, list]):
         num: int = 0
         plan_items = []
-        for key, value in plan_group.items():
+        terminate_content = None  # Store terminate output content for pure text display
+
+        # Convert dict to list to handle last item specially
+        plan_entries = list(plan_group.items())
+
+        for idx, (key, value) in enumerate(plan_entries):
+            is_last = idx == len(plan_entries) - 1
+
+            # Check if this is the last item and it's a terminate action
+            if is_last and value:
+                last_message = value[-1] if value else None
+                if last_message and last_message.action_report:
+                    try:
+                        action_out = ActionOutput.from_dict(
+                            json.loads(last_message.action_report)
+                        )
+                        # If this is a terminate action, extract content
+                        # and skip plan display
+                        if action_out and action_out.terminate:
+                            terminate_content = (
+                                action_out.content
+                                or action_out.view
+                                or "Task completed"
+                            )
+                            continue  # Skip adding to plan_items
+                    except Exception:
+                        pass  # If parsing fails, treat as normal plan item
+
             num = num + 1
             plan_items.append(
                 {
@@ -263,7 +327,14 @@ class GptsMemory:
                     "markdown": await self._messages_to_agents_vis(value),
                 }
             )
-        return await self._messages_to_plan_vis(plan_items)
+
+        plan_vis = await self._messages_to_plan_vis(plan_items)
+
+        # If there was a terminate action, append its content as pure text (not in plan)
+        if terminate_content:
+            return f"{plan_vis}\n{terminate_content}" if plan_vis else terminate_content
+
+        return plan_vis
 
     async def simple_message(self, conv_id: str):
         """Get agent simple message."""

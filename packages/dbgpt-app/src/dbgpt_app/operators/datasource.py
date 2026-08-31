@@ -77,7 +77,7 @@ _DEFAULT_TEMPLATE_ZH = """你是一个数据库专家.
     “提供的表结构信息不足以生成 sql 查询。” 禁止随意捏造信息。
     4. 请注意生成SQL时不要弄错表和列的关系
     5. 请检查SQL的正确性，并保证正确的情况下优化查询性能
-    6.请从如下给出的展示方式种选择最优的一种用以进行数据渲染，将类型名称放入返回要求格式的name参数值种\
+    6.请从如下给出的展示方式种选择最优的一种用以进行数据渲染，将类型名称放入返回要求格式的name参数值中\
     ，如果找不到最合适的则使用'Table'作为展示方式，可用数据展示方式如下: {display_type}
 用户问题:
     {user_input}
@@ -105,6 +105,7 @@ _PARAMETER_DATASOURCE = Parameter.build_from(
     type=DBResource,
     description=_("The datasource to retrieve the context"),
 )
+
 _PARAMETER_PROMPT_TEMPLATE = Parameter.build_from(
     _("Prompt Template"),
     "prompt_template",
@@ -147,6 +148,7 @@ _PARAMETER_CONTEXT_KEY = Parameter.build_from(
     type=str,
     optional=True,
     default="context",
+    alias=["context"],
     description=_("The key of the context, it will be used in building the prompt"),
 )
 _INPUTS_QUESTION = IOField.build_from(
@@ -172,7 +174,7 @@ _OUTPUTS_SQL_RESULT = IOField.build_from(
     _("SQL result"),
     "sql_result",
     str,
-    description=_("The result of the SQL execution"),
+    description=_("The result of the SQL execution(GPT-Vis format)"),
 )
 
 _INPUTS_SQL_DICT_LIST = IOField.build_from(
@@ -189,7 +191,9 @@ _INPUTS_SQL_DICT_LIST = IOField.build_from(
 class GPTVisMixin:
     async def save_view_message(self, dag_ctx: DAGContext, view: str):
         """Save the view message."""
-        await dag_ctx.save_to_share_data(BaseLLM.SHARE_DATA_KEY_MODEL_OUTPUT_VIEW, view)
+        await dag_ctx.save_to_share_data(
+            BaseLLM.SHARE_DATA_KEY_MODEL_OUTPUT_VIEW, view, overwrite=True
+        )
 
 
 class HODatasourceRetrieverOperator(MapOperator[str, HOContextBody]):
@@ -286,6 +290,19 @@ class HODatasourceRetrieverOperator(MapOperator[str, HOContextBody]):
 class HODatasourceExecutorOperator(GPTVisMixin, MapOperator[dict, str]):
     """Execute the context from the datasource."""
 
+    _share_data_key = "__datasource_executor_result__"
+
+    class MarkdownMapper(MapOperator[str, str]):
+        async def map(self, context: str) -> str:
+            """Convert the result to markdown."""
+
+            from dbgpt.util.pd_utils import df_to_markdown
+
+            df = await self.current_dag_context.get_from_share_data(
+                HODatasourceExecutorOperator._share_data_key
+            )
+            return df_to_markdown(df)
+
     metadata = ViewMetadata(
         label=_("Datasource Executor Operator"),
         name="higher_order_datasource_executor_operator",
@@ -293,7 +310,16 @@ class HODatasourceExecutorOperator(GPTVisMixin, MapOperator[dict, str]):
         category=OperatorCategory.DATABASE,
         parameters=[_PARAMETER_DATASOURCE.new()],
         inputs=[_INPUTS_SQL_DICT.new()],
-        outputs=[_OUTPUTS_SQL_RESULT.new()],
+        outputs=[
+            _OUTPUTS_SQL_RESULT.new(),
+            IOField.build_from(
+                _("Markdown result"),
+                "markdown_result",
+                str,
+                description=_("The markdown result of the SQL execution"),
+                mappers=[MarkdownMapper],
+            ),
+        ],
         tags={"order": TAGS_ORDER_HIGH},
     )
 
@@ -314,8 +340,16 @@ class HODatasourceExecutorOperator(GPTVisMixin, MapOperator[dict, str]):
         sql = sql_dict.get("sql")
         if not sql:
             return sql_dict.get("thoughts", "No SQL found in the input dictionary.")
+
+        thoughts = sql_dict.get("thoughts", "")
+
         data_df = await self._datasource.query_to_df(sql)
+        # Save the result to share data, for markdown mapper
+        await self.current_dag_context.save_to_share_data(
+            HODatasourceExecutorOperator._share_data_key, data_df
+        )
         view = await vis.display(chart=sql_dict, data_df=data_df)
+        view = thoughts + "\n\n" + view
         await self.save_view_message(self.current_dag_context, view)
         return view
 
@@ -363,3 +397,49 @@ class HODatasourceDashboardOperator(GPTVisMixin, MapOperator[dict, str]):
         view = await vis.display(charts=chart_params)
         await self.save_view_message(self.current_dag_context, view)
         return view
+
+
+class HODatasourceStructedOperator(MapOperator[dict, str]):
+    """Execute the context from the datasource."""
+
+    metadata = ViewMetadata(
+        label=_("Datasource Structed Operator"),
+        name="higher_order_datasource_structed_operator",
+        description=_(
+            "Execute the context from the datasource and output structed data."
+        ),
+        category=OperatorCategory.DATABASE,
+        parameters=[_PARAMETER_DATASOURCE.new()],
+        inputs=[_INPUTS_SQL_DICT_LIST.new()],
+        outputs=[IOField.build_from(_("Dictionary"), "dict", dict)],
+        tags={"order": TAGS_ORDER_HIGH},
+    )
+
+    def __init__(self, datasource: DBResource, **kwargs):
+        """Initialize the operator."""
+        MapOperator.__init__(self, **kwargs)
+        self._datasource = datasource
+
+    async def map(self, sql_dict_list: List[dict]) -> dict:
+        """Execute the context from the datasource."""
+
+        if not isinstance(sql_dict_list, list):
+            raise ValueError(
+                "The input value of datasource executor should be a list of "
+                "dictionaries."
+            )
+        chart_params = []
+        for chart_item in sql_dict_list:
+            chart_dict = {k: v for k, v in chart_item.items()}
+            sql = chart_item.get("sql")
+            try:
+                data_df = await self._datasource.query_to_df(sql)
+                # Here we use pandas.DataFrame.to_json()
+                # to avoid JSON serialization failures caused by data type issues
+                # (e.g., pandas.Timestamp) in subsequent operations
+                chart_dict["data"] = json.loads(data_df.to_json(orient="records"))
+            except Exception as e:
+                logger.warning(f"Sql execute failed！{str(e)}")
+                chart_dict["err_msg"] = str(e)
+            chart_params.append(chart_dict)
+        return {"data": chart_params}

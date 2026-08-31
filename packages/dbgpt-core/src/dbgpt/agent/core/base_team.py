@@ -1,7 +1,7 @@
 """Base classes for managing a group of agents in a team chat."""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from dbgpt._private.pydantic import BaseModel, ConfigDict, Field
 
@@ -145,6 +145,7 @@ class ManagerAgent(ConversableAgent, Team):
         messages: List[AgentMessage],
         sender: Optional[Agent] = None,
         prompt: Optional[str] = None,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Think and reason about the current task goal."""
         # TeamManager, which is based on processes and plans by default, only needs to
@@ -160,10 +161,12 @@ class ManagerAgent(ConversableAgent, Team):
         self,
         received_message: AgentMessage,
         sender: Agent,
+        observation: Optional[str] = None,
         rely_messages: Optional[List[AgentMessage]] = None,
         historical_dialogues: Optional[List[AgentMessage]] = None,
         context: Optional[Dict[str, Any]] = None,
         is_retry_chat: bool = False,
+        current_retry_counter: Optional[int] = None,
     ) -> Tuple[List[AgentMessage], Optional[Dict]]:
         """Load messages for thinking."""
         return [AgentMessage(content=received_message.content)], None

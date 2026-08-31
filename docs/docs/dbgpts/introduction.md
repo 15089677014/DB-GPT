@@ -1,280 +1,164 @@
-# dbgpts
+# Skills Overview
 
-[dbgpts](https://github.com/eosphoros-ai/dbgpts) contains some data apps, AWEL operators, AWEL workflows, agents and resources 
-which build upon the DB-GPT.
+> The skill definition on this page is adapted from the [Agent Skills](https://agentskills.io/what-are-skills) description, which frames skills as lightweight, self-contained capability packages that agents can discover, load, and apply on demand.
 
-## Introduction
+## What is a skill?
 
-### Why We Need `dbgpts`
+In DB-GPT, a skill is a reusable capability package that gives an agent a structured way to solve a task.
 
-In a production-level LLM's application, there are many components that need to be
-integrated, and you want to start your research and creativity quickly by using the 
-existing components.
+Instead of relying only on free-form reasoning, a skill provides a stable execution pattern for a specific kind of work.
 
-At the same time, we hope that the core components of DB-GPT keep simple and easy to
-maintain, and some complex components can be developed in the form of plugins.
+<img
+  src="/img/skill/skill_list.png"
+  alt="DB-GPT skills overview"
+  className="showcase-hero-image"
+/>
 
-So, we need a plugin system to extend the capabilities of DB-GPT, and `dbgpts` is the
-plugin system or a part of ecosystem of DB-GPT.
 
-### What Is `dbgpts`
+## Skill definition
 
-There are some concepts in `dbgpts`:
-- `app`: It includes data apps, AWEL operators, AWEL workflows, agents and resources, sometimes, we
-call it `dbgpts` app or `dbgpts` package.
-- `repo`: It is a repository of `dbgpts` apps, you can install a `dbgpts` app from a `dbgpts` repo,
-the default `dbgpts` repo is [eosphoros-ai/dbgpts](https://github.com/eosphoros-ai/dbgpts), you can
-also create your own `dbgpts` repo or use other's `dbgpts` repo.
+Adapted from the Agent Skills description, a skill can be understood as:
 
-### How To Run `dbgpts`
+- a **lightweight extension format** for giving agents specialized knowledge and workflows
+- a **package of know-how**, not just facts, APIs, or prompts
+- a **progressive-disclosure unit** that can be discovered first and fully loaded only when needed
+- a **self-contained bundle** of instructions, scripts, templates, and reference files
+- a way to make agent behavior more **consistent, repeatable, and domain-aware**
 
-1. When you install a `dbgpts` app, it will be loaded to your DB-GPT webserver automatically,
-and you can use it in the DB-GPT webserver or trigger it by command line `dbgpt run ...`.
-2. You can also run a `dbgpts` app as a command line tool, you can use it in your terminal by
-`dbgpt app run ...` with `--local` option, it will run the app in your local environment.
+In DB-GPT terms, a skill is not just “something the model knows.” It is a packaged workflow that helps the agent decide:
 
-## Quick Start
+- what problem it is solving
+- what tools it should use
+- what order the steps should follow
+- what outputs should be produced
+- what constraints it should obey
 
-Let's install a `dbgpts` package named [awel-flow-simple-streaming-chat](https://github.com/eosphoros-ai/dbgpts/tree/main/workflow/awel-flow-simple-streaming-chat)
+## What a skill usually contains
 
-```bash
-dbgpt app install awel-flow-simple-streaming-chat -U
+A DB-GPT skill package often includes:
+
+- a name
+- instructions in `SKILL.md`
+- optional scripts
+- optional templates
+- optional static resources or examples
+
+At its core, a skill is a folder containing a `SKILL.md` file. This file includes metadata and instructions that tell an agent how to perform a specific task. Skills can also bundle scripts, templates, and reference materials.
+
+```text
+my-skill/
+├── SKILL.md          # Required: instructions + metadata
+├── scripts/          # Optional: executable code
+├── references/       # Optional: documentation loaded as needed
+└── assets/           # Optional: templates, output resources, static files
 ```
 
-### Run The App Locally
+## Skill anatomy
 
-Then, you can run the app in your terminal:
+Following the structure used by DB-GPT's own skill-creator guidance, a skill is organized as a small self-contained package:
 
-```bash
-dbgpt run flow --local chat \
---name awel-flow-simple-streaming-chat \
---model "gpt-3.5-turbo" \
---messages "hello" \
---stream
-```
-- `dbgpt run flow`: Means you want to run a AWEL workflow.
-- `--local`: Means you want to run the workflow in your local environment without 
-starting the DB-GPT webserver, it will find the `app` installed in your local 
-environment, then run it, also, you can use `--file` to specify the python file.
-- `--name`: The name of the app.
-- `--model`: The LLM model you want to use,  `awel-flow-simple-streaming-chat` will 
-use OpenAI LLM by default if you run it with `--local`.
-- `--messages`: The messages you want to send to the LLM.
-- `--stream`: Means you want to run the workflow in streaming mode.
+| Part | Required | Purpose |
+|------|----------|---------|
+| `SKILL.md` | Yes | Defines the skill's identity and instructions |
+| `scripts/` | No | Stores executable code such as Python or shell helpers |
+| `references/` | No | Stores documents that can be loaded into context only when needed |
+| `assets/` | No | Stores templates, fonts, icons, boilerplate files, or other output resources |
 
-The output will be like this:
+### `SKILL.md`
 
-```bash
-You: hello
-[~info] Chat stream started
-[~info] JSON data: {"model": "gpt-3.5-turbo", "messages": "hello", "stream": true}
-Bot: 
-Hello! How can I assist you today?
-🎉 Chat stream finished, timecost: 1.12 s
-```
+`SKILL.md` is the entry point of the skill. It usually contains:
 
-### Run The App In DB-GPT Webserver
+- metadata such as `name` and `description`
+- the workflow instructions the agent should follow
+- guidance on when to read additional references or use bundled resources
 
-After you install the `awel-flow-simple-streaming-chat` app, you can run it in the DB-GPT webserver.
-Also, you can use the `dbgpt` command line tool to trigger the app.
+### `scripts/`
 
-```bash
-dbgpt run flow chat \
---name awel-flow-simple-streaming-chat \
---model "chatgpt_proxyllm" \
---messages "hello" \
---stream
-```
+Use `scripts/` for executable helpers, such as:
 
-You just remove the `--local` option, then the command will connect to the DB-GPT webserver and run the app.
-And you should modify the `--model` option to your model name in the DB-GPT webserver.
+- Python data-processing utilities
+- shell scripts
+- report-generation helpers
+- automation code used by the skill
 
-The output will be like this:
+### `references/`
 
-```bash
-You: hello
-[~info] Chat stream started
-[~info] JSON data: {"model": "chatgpt_proxyllm", "messages": "hello", "stream": true, "chat_param": "1ecd35d4-a60a-420b-8943-8fc44f7f054a", "chat_mode": "chat_flow"}
-Bot: 
-Hello! How can I assist you today?
-🎉 Chat stream finished, timecost: 0.98 s
-```
+Use `references/` for supporting knowledge that should not always live inside `SKILL.md`, such as:
 
-## Run The App With `command` Mode
+- API documentation
+- business logic references
+- schemas
+- workflow guides
+- policy or domain documents
 
-In previous examples, we run the app in `chat` mode, but not all `dbgpts` apps support `chat` mode,
-some apps support `command` mode, you can run the app with `dbgpt run flow cmd` command.
+This keeps `SKILL.md` smaller while still making deeper context available when the task requires it.
 
-### Run The App Locally
+### `assets/`
 
-```bash
-dbgpt run flow --local cmd \
---name awel-flow-simple-streaming-chat \
--d '
-{
-    "model": "gpt-3.5-turbo",
-    "messages": "hello",
-    "stream": true
-}
-'
-```
+Use `assets/` for files that support the output rather than the reasoning process, such as:
 
-We replace the `chat` mode with `cmd` mode, and use `-d` option to specify the data in JSON format.
+- HTML templates
+- icons and logos
+- fonts
+- boilerplate frontend files
+- report resources
 
-The output will be like this:
+## Why skills matter
 
-```bash
-[~info] Flow started
-[~info] JSON data: {"model": "gpt-3.5-turbo", "messages": "hello", "stream": true}
-Command output: 
-Hello! How can I assist you today?
-🎉 Flow finished, timecost: 1.35 s
-```
+Skills are useful when:
 
-### Run The App In DB-GPT Webserver
+- a workflow should be standardized
+- the task requires domain-specific reasoning
+- reporting or analysis should follow a known pattern
+- the agent should use curated instructions instead of improvising everything
 
-Just remove the `--local` option, then the command will connect to the DB-GPT webserver and run the app.
+## How skills work
 
-```bash
-dbgpt run flow cmd \
---name awel-flow-simple-streaming-chat \
--d '
-{
-    "model": "chatgpt_proxyllm",
-    "messages": "hello",
-    "stream": true
-}
-'
-```
+The common execution pattern is:
 
-The output will be like this:
+1. The agent identifies that a task matches a skill.
+2. The skill instructions are loaded.
+3. The agent follows the skill-defined workflow.
+4. The required tools are executed.
+5. The final answer, report, or page is returned.
 
-```bash
-[~info] Flow started
-[~info] JSON data: {"model": "chatgpt_proxyllm", "messages": "hello", "stream": true}
-Command output: 
-Hello! How can I assist you today?
-🎉 Flow finished, timecost: 1.09 s
-```
+## Skills and built-in tools
 
-## `chat` Mode vs `command` Mode
+Skills often orchestrate the built-in execution tools together:
 
-In short, `chat` mode is used for chat applications, and `command` mode is used to 
-trigger the app with a command.
+- `load_skill` → load the skill instructions
+- `sql_query` → retrieve structured data if needed
+- `code_interpreter` → compute metrics, transform data, and generate charts
+- `shell_interpreter` → run shell commands when required
+- `html_interpreter` → render the final report or webpage
 
-For example, you want to load your documents to the DB-GPT, you can use `command` mode
-to trigger the app to load the documents, it always runs once and the result will be
-returned.
+## Practical examples
 
-And `chat` mode is a special case of `command` mode, it provides a chat interface to
-the user, and you can chat with the LLM in an interactive way.
+### Financial report analysis
 
+A financial-report skill can define:
 
-## Run You App With Python Script
+- how to inspect uploaded reports
+- how to compute indicators and compare periods
+- how to generate charts and summaries
+- how to render the final HTML report
 
-If you run app locally, it will find the app which is installed in your local environment,
-also, you can run the app by providing the python file.
+### CSV / Excel analysis
 
-Let's create a python file named `simple_chat_app.py`:
+A data-analysis skill can define:
 
-```python
-import os
-from dbgpt._private.pydantic import BaseModel, Field
-from dbgpt.core import ModelMessage, ModelRequest
-from dbgpt.core.awel import DAG, HttpTrigger, MapOperator
-from dbgpt.model.proxy import OpenAILLMClient
-from dbgpt.model.operators import LLMOperator
+- how to inspect a dataset
+- how to calculate core metrics
+- how to visualize outputs
+- how to turn the result into a reusable report
 
+## Good practices
 
-class TriggerReqBody(BaseModel):
-    model: str = Field(..., description="Model name")
-    messages: str = Field(..., description="User input")
+- use skills when the workflow should be repeatable
+- follow the skill instructions strictly
+- prefer the tools required by the skill over ad-hoc alternatives
+- use `html_interpreter` for final report rendering when the skill produces a webpage or report
 
+## Next step
 
-class RequestHandleOperator(MapOperator[TriggerReqBody, ModelRequest]):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    async def map(self, input_value: TriggerReqBody) -> ModelRequest:
-        messages = [ModelMessage.build_human_message(input_value.messages)]
-        return ModelRequest.build_request(input_value.model, messages)
-
-
-with DAG("dbgpts_simple_chat_app") as dag:
-    # Receive http request and trigger dag to run.
-    trigger = HttpTrigger(
-        "/dbgpts/simple_chat_app", methods="POST", request_body=TriggerReqBody
-    )
-    llm_client = OpenAILLMClient(
-        model_alias="gpt-3.5-turbo",  # or other models, eg. "gpt-4o"
-        api_base=os.getenv("OPENAI_API_BASE"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-    request_handle_task = RequestHandleOperator()
-    llm_task = LLMOperator(llm_client=llm_client)
-    model_parse_task = MapOperator(lambda out: out.text)
-    trigger >> request_handle_task >> llm_task >> model_parse_task
-```
-
-Then you can run the app by providing the python file:
-
-```bash
-dbgpt run flow --local --file simple_chat_app.py \
-chat \
---name dbgpts_simple_chat_app \
---model "gpt-3.5-turbo" \
---messages "hello"
-```
-
-The output will be like this:
-
-```bash
-You: hello
-[~info] Chat started
-[~info] JSON data: {"model": "gpt-3.5-turbo", "messages": "hello", "stream": false}
-Bot: 
-Hello! How can I assist you today?                                                                                                                                                       
-
-🎉 Chat stream finished, timecost: 1.06 s
-```
-
-And you can run previous examples with `command` mode.
-
-```bash
-dbgpt run flow --local --file simple_chat_app.py \
-cmd \
---name dbgpts_simple_chat_app \
--d '
-{
-    "model": "gpt-3.5-turbo",
-    "messages": "hello"
-}'
-```
-
-The output will be like this:
-
-```bash
-[~info] Flow started
-[~info] JSON data: {"model": "gpt-3.5-turbo", "messages": "hello"}
-Command output: 
-Hello! How can I assist you today?
-🎉 Flow finished, timecost: 1.04 s
-```
-
-## Show Your App In DB-GPT Webserver
-
-When you install the workflow, you can see the workflow in the DB-GPT webserver, you can open
-the **AWEL Flow** page, then you can see the workflow named `awel_flow_simple_streaming_chat`.
-
-<p align="left">
-  <img src={'/img/dbgpts/awel_flow_simple_streaming_chat_1.png'} width="720px" />
-</p>
-
-Then you can click the `edit` button to see the details of the workflow.
-<p align="left">
-  <img src={'/img/dbgpts/awel_flow_simple_streaming_chat_2.png'} width="720px" />
-</p>
-
-Note: Not all workflows support editing, there are two types of workflows according to the
-definition type: `json` and `python`, the `json` type workflow can be edited in the DB-GPT,
-We will show you more details in the next sections.
+See [How to Use Skill](./how-to-use-skill.md) for the practical workflow.

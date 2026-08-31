@@ -27,7 +27,7 @@ function isPrerelease(version) {
 function getLastStableVersion() {
   const lastStableVersion = versions.find((version) => !isPrerelease(version));
   if (!lastStableVersion) {
-    throw new Error('unexpected, no stable Docusaurus version?');
+    return 'current';
   }
   return lastStableVersion;
 }
@@ -62,6 +62,18 @@ const config = {
   i18n: {
     defaultLocale: 'en',
     locales: ['en', 'zh-CN'],
+    localeConfigs: {
+      en: {
+        label: 'English',
+        direction: 'ltr',
+        htmlLang: 'en-US',
+      },
+      'zh-CN': {
+        label: '简体中文',
+        direction: 'ltr',
+        htmlLang: 'zh-CN',
+      },
+    },
   },
 
   scripts: [
@@ -196,31 +208,28 @@ const config = {
           alt: 'DB-GPT Logo',
           src: 'img/dbgpt_logo.svg',
           srcDark: 'img/DB-GPT_LOGO_White.svg',
-          href: "/docs/overview"
+          href: "/"
         },
 
         items: [
           {
             type: 'docSidebar',
-            sidebarId: 'tutorialSidebar',
+            sidebarId: 'docsSidebar',
             position: 'left',
             label: 'Docs',
-            to: "/docs/overview",
           },
           {
-            type: 'docSidebar',
-            sidebarId: "tutorials",
-            to: '/turtorials', 
-            label: 'Turtorial', 
-            position: 'left'
+            type: 'localeDropdown',
+            position: 'left',
+            className: 'navbar-language-dropdown',
+            dropdownActiveClassDisabled: true,
           },
           {
             href: 'https://github.com/eosphoros-ai/community',
-            position: 'left',
-            label: "Community",
-            className: 'header-community-link',
-
+            position: 'right',
+            label: 'Community',
           },
+          {to: '/blog', label: 'Blog', position: 'right'},
           {
             type: "docsVersionDropdown",
             position: "right",
@@ -228,22 +237,16 @@ const config = {
             dropdownActiveClassDisabled: true,
           },
           {
+            href: 'https://github.com/eosphoros-ai/DB-GPT/releases',
+            position: 'right',
+            label: "Releases",
+          },
+          {
             href: 'https://github.com/eosphoros-ai/DB-GPT',
             position: 'right',
             className: 'header-github-link',
+            'aria-label': 'GitHub repository',
           },
-          {
-            href: 'https://huggingface.co/eosphoros',
-            position: 'right',
-            label: "HuggingFace",
-            className: 'header-huggingface-link',
-          },
-          {
-            href: 'https://www.yuque.com/eosphoros/dbgpt-docs/bex30nsv60ru0fmx',
-            position: 'left',
-            label: "中文文档",
-          },
-          {to: '/blog', label: 'Blog', position: 'left'},
         ],
       },
       footer: {

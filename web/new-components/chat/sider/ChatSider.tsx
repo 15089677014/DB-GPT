@@ -178,13 +178,15 @@ const ChatSider: React.FC<{
   const items: MenuProps['items'] = useMemo(() => {
     const list = dialogueList[1] || [];
     if (list?.length > 0) {
-      return list.map((item: IChatDialogueSchema) => ({
-        ...item,
-        label: item.user_input || item.select_param,
-        key: item.conv_uid,
-        icon: <AppDefaultIcon scene={item.chat_mode} />,
-        default: false,
-      }));
+      return list
+        .filter((item: IChatDialogueSchema) => item.chat_mode !== 'chat_react_agent')
+        .map((item: IChatDialogueSchema) => ({
+          ...item,
+          label: item.user_input || item.select_param,
+          key: item.conv_uid,
+          icon: <AppDefaultIcon scene={item.chat_mode} />,
+          default: false,
+        }));
     }
     return [];
   }, [dialogueList]);

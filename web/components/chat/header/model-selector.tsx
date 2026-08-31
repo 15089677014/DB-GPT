@@ -42,16 +42,17 @@ function ModelSelector({ onChange }: Props) {
     <Select
       value={model}
       placeholder={t('choose_model')}
-      className='w-52'
+      className='min-w-[120px]'
+      popupMatchSelectWidth={false}
       onChange={val => {
         onChange?.(val);
       }}
     >
       {modelList.map(item => (
-        <Select.Option key={item}>
+        <Select.Option key={item} title={item}>
           <div className='flex items-center'>
             {renderModelIcon(item)}
-            <span className='ml-2'>{MODEL_ICON_MAP[item]?.label || item}</span>
+            <span className='ml-2'>{item}</span>
           </div>
         </Select.Option>
       ))}

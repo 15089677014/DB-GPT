@@ -228,7 +228,9 @@ class RDBMSConnector(BaseConnector):
 
         # SQL will raise error with schema
         _schema = (
-            None if self.db_type == DBType.SQLite.value() else self._engine.url.database
+            None
+            if self.db_type in (DBType.SQLite.value(), DBType.DuckDb.value())
+            else self._engine.url.database
         )
         # including view support by adding the views as well as tables to the all
         # tables list if view_support is True
@@ -744,7 +746,7 @@ class RDBMSConnector(BaseConnector):
         sql = sql.strip()
         parsed = sqlparse.parse(sql)[0]
         sql_type = parsed.get_type()
-        if sql_type == "CREATE":
+        if sql_type == "CREATE" or sql_type == "DROP":
             table_name = self._extract_table_name_from_ddl(parsed)
         else:
             table_name = parsed.get_name()

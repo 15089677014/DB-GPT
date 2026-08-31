@@ -3,7 +3,7 @@ import logging
 import re
 import timeit
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
 from dbgpt._private.config import Config
 from dbgpt.component import ComponentType
@@ -154,6 +154,14 @@ class KnowledgeService:
             res.id = space.id
             res.name = space.name
             res.vector_type = space.vector_type
+            # Parse index_methods from JSON string
+            if space.index_methods:
+                try:
+                    import json
+
+                    res.index_methods = json.loads(space.index_methods)
+                except Exception:
+                    res.index_methods = []
             res.domain_type = space.domain_type
             res.desc = space.desc
             res.owner = space.owner
@@ -464,6 +472,23 @@ class KnowledgeService:
             )
             # delete vector by ids
             storage_connector.delete_by_ids(vector_ids)
+
+            # we next delete the corresponding CHUNK HISTORY data in Milvus
+            if (
+                space.vector_type == "KnowledgeGraph"
+                and storage_connector._vector_store_config.__type__ == "milvus"
+            ):
+                # this gives the vector store type
+                # in case this will support chroma in the future
+                embedding_vector_type = storage_connector._vector_store_config.__type__
+                # get the collection name
+                space_name = space_name + "_CHUNK_HISTORY"
+                storage_connector = self.storage_manager.get_storage_connector(
+                    index_name=space_name, storage_type=embedding_vector_type
+                )
+                # documents[0].id is the id we use to find the corresponding document
+                storage_connector.delete_by_file_id(documents[0].id)
+
         # delete chunks
         document_chunk_dao.raw_delete(documents[0].id)
         # delete document
@@ -641,3 +666,14 @@ class KnowledgeService:
                 }
             )
         return res
+
+    def get_retrieve_strategy_list(self) -> List[Dict]:
+        """get retrieve model list
+        retrieve strategy: dbgpt.rag.retriever.base.RetrieverStrategy
+        """
+        return [
+            {"name": "SEMANTIC", "name_cn": "语义检索", "value": "SEMANTIC"},
+            {"name": "KEYWORD", "name_cn": "全文检索", "value": "KEYWORD"},
+            {"name": "Tree", "name_cn": "树形检索", "value": "Tree"},
+            {"name": "HYBRID", "name_cn": "混合检索", "value": "HYBRID"},
+        ]

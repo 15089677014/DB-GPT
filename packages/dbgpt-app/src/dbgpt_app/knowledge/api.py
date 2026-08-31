@@ -1,9 +1,11 @@
+import html
 import logging
 import os
 import shutil
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import HTMLResponse
 
 from dbgpt._private.config import Config
 from dbgpt.configs import TAG_KEY_KNOWLEDGE_FACTORY_DOMAIN_TYPE
@@ -56,6 +58,7 @@ from dbgpt_serve.rag.api.schemas import (
 # from dbgpt_serve.rag.connector import VectorStoreConnector
 from dbgpt_serve.rag.service.service import Service
 from dbgpt_serve.rag.storage_manager import StorageManager
+from dbgpt_serve.utils.auth import UserRequest, get_user_from_headers
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +84,10 @@ def get_fs() -> FileStorageClient:
 
 
 @router.post("/knowledge/space/add")
-async def space_add(request: KnowledgeSpaceRequest):
+async def space_add(
+    request: KnowledgeSpaceRequest,
+    user_token: UserRequest = Depends(get_user_from_headers),
+):
     logger.info(f"/space/add params: {request}")
     try:
         await blocking_func_to_async(
@@ -126,6 +132,19 @@ def space_delete(request: KnowledgeSpaceRequest):
         return Result.failed(code="E000X", msg=f"space delete error {e}")
 
 
+@router.post("/knowledge/retrieve_strategy_list")
+async def retrieve_strategy_list(
+    user_token: UserRequest = Depends(get_user_from_headers),
+):
+    try:
+        res = await blocking_func_to_async(
+            get_executor(), knowledge_space_service.get_retrieve_strategy_list
+        )
+        return Result.succ(res)
+    except Exception as e:
+        return Result.failed(code="E000X", msg=f"get retrieve strategy list error {e}")
+
+
 @router.post("/knowledge/{space_id}/arguments")
 async def arguments(space_id: str):
     logger.info(f"/knowledge/{space_id}/arguments params: {space_id}")
@@ -142,6 +161,7 @@ async def arguments(space_id: str):
 async def recall_test(
     space_name: str,
     request: DocumentRecallTestRequest,
+    user_token: UserRequest = Depends(get_user_from_headers),
 ):
     logger.info(f"/knowledge/{space_name}/recall_test params: {request}")
     try:
@@ -193,7 +213,11 @@ def recall_retrievers(
 
 
 @router.post("/knowledge/{space_id}/argument/save")
-async def arguments_save(space_id: str, argument_request: SpaceArgumentRequest):
+async def arguments_save(
+    space_id: str,
+    argument_request: SpaceArgumentRequest,
+    user_token: UserRequest = Depends(get_user_from_headers),
+):
     print("/knowledge/space/argument/save params:")
     try:
         res = await blocking_func_to_async(
@@ -262,12 +286,12 @@ def chunk_strategies():
                         if strategy in knowledge.support_chunk_strategy()
                         and knowledge.document_type() is not None
                     ],
-                    "type": set(
-                        [
+                    "type": list(
+                        {
                             knowledge.type().value
                             for knowledge in KnowledgeFactory.subclasses()
                             if strategy in knowledge.support_chunk_strategy()
-                        ]
+                        }
                     ),
                 }
                 for strategy in ChunkStrategy
@@ -331,7 +355,11 @@ async def space_config() -> Result[KnowledgeConfigResponse]:
 
 
 @router.post("/knowledge/{space_name}/document/list")
-def document_list(space_name: str, query_request: DocumentQueryRequest):
+def document_list(
+    space_name: str,
+    query_request: DocumentQueryRequest,
+    user_token: UserRequest = Depends(get_user_from_headers),
+):
     logger.info(f"/document/list params: {space_name}, {query_request}")
     try:
         return Result.succ(
@@ -353,6 +381,61 @@ def graph_vis(space_name: str, query_request: GraphVisRequest):
         )
     except Exception as e:
         return Result.failed(code="E000X", msg=f"get graph vis error {e}")
+
+
+@router.get("/knowledge/{space_name}/codegraph/visualize")
+async def codegraph_visualize(space_name: str):
+    """Interactive HTML visualization of the code knowledge graph.
+
+    Returns a self-contained HTML page with vis-network force-directed graph.
+    Features: node coloring by type, community detection, search, click-to-inspect.
+    """
+    from dbgpt_serve.rag.tools.codegraph_tools import _load_graph
+
+    # space_name is a URL path param and flows into a filesystem join inside
+    # _load_graph → _get_graph_cache_dir. Reject path-traversal payloads up
+    # front (Binary/\\/..) rather than letting them build an out-of-tree path.
+    if (
+        not space_name
+        or "/" in space_name
+        or "\\" in space_name
+        or space_name
+        in (
+            ".",
+            "..",
+        )
+    ):
+        return HTMLResponse(
+            content="<html><body><h2>Invalid knowledge space name</h2></body></html>",
+            status_code=400,
+        )
+
+    graph, load_error = _load_graph(space_name)
+    if graph is None:
+        # Escape load_error before splicing into HTML — space_name is a
+        # user-controlled URL path param and the error message echoes it back,
+        # so an unescaped value is a reflected-XSS vector.
+        error_detail = f"<p>详情: {html.escape(load_error)}</p>" if load_error else ""
+        return HTMLResponse(
+            content="<html><body><h2>No code graph found</h2>"
+            "<p>请先构建代码图谱：创建知识库时启用代码图谱索引</p>"
+            f"{error_detail}</body></html>",
+            status_code=404,
+        )
+
+    try:
+        from dbgpt_ext.rag.graph_builder.codegraph_visualizer import codegraph_to_html
+
+        html_content = codegraph_to_html(graph, knowledge_id=space_name)
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logger.error(f"codegraph_visualize error: {e}", exc_info=True)
+        # Escape the exception text to prevent reflected XSS via the error path.
+        return HTMLResponse(
+            content=f"<html><body><h2>Visualization Error</h2>"
+            f"<p>{html.escape(str(e))}</p></body></html>",
+            status_code=500,
+        )
 
 
 @router.post("/knowledge/{space_name}/document/delete")
@@ -563,7 +646,7 @@ async def document_summary(request: DocumentSummaryRequest):
 
         if not chat.prompt_template.stream_out:
             return StreamingResponse(
-                no_stream_generator(chat),
+                no_stream_generator(chat, request.model_name),
                 headers=headers,
                 media_type="text/event-stream",
             )

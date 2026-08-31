@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from concurrent.futures import Executor, ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, final
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, cast, final
 
-from jinja2 import Template
+from jinja2.sandbox import SandboxedEnvironment
 
 from dbgpt._private.pydantic import ConfigDict, Field
 from dbgpt.core import LLMClient, ModelMessageRoleType, PromptTemplate
@@ -24,6 +25,8 @@ from ..util.llm.llm import LLMConfig, LLMStrategyType
 from ..util.llm.llm_client import AIWrapper
 from .action.base import Action, ActionOutput
 from .agent import Agent, AgentContext, AgentMessage, AgentReviewInfo
+from .context import ContextBudgetConfig, ContextManager
+from .context.manager import ContextStatusCallback
 from .memory.agent_memory import AgentMemory
 from .memory.gpts.base import GptsMessage
 from .memory.gpts.gpts_memory import GptsMemory
@@ -45,11 +48,15 @@ class ConversableAgent(Role, Agent):
     bind_prompt: Optional[PromptTemplate] = None
     run_mode: Optional[AgentRunMode] = Field(default=None, description="Run mode")
     max_retry_count: int = 3
+    max_timeout: int = 600
     llm_client: Optional[AIWrapper] = None
     # 确认当前Agent是否需要进行流式输出
     stream_out: bool = True
     # 确认当前Agent是否需要进行参考资源展示
     show_reference: bool = False
+
+    # Multi-layer context management (initialized via enable_context_management())
+    _context_manager: Optional[ContextManager] = None
 
     executor: Executor = Field(
         default_factory=lambda: ThreadPoolExecutor(max_workers=1),
@@ -60,6 +67,81 @@ class ConversableAgent(Role, Agent):
         """Create a new agent."""
         Role.__init__(self, **kwargs)
         Agent.__init__(self)
+
+    def init_context_management(
+        self,
+        config: Optional[ContextBudgetConfig] = None,
+        model_name: Optional[str] = None,
+        on_status_event: Optional[ContextStatusCallback] = None,
+    ) -> None:
+        """Initialize multi-layer context management.
+
+        Call this after the agent is fully configured (llm_client set, etc.).
+
+        Args:
+            config: Budget configuration. If None, derived from agent_context.
+            model_name: Model name for tokenizer selection.
+            on_status_event: Async callback invoked with context status dicts
+                so the caller (e.g. SSE layer) can push live updates.
+        """
+        if config is None:
+            ctx = self.agent_context
+            if ctx is None:
+                config = ContextBudgetConfig()
+            else:
+                config = ContextBudgetConfig(
+                    max_context_tokens=ctx.max_context_tokens,
+                    warning_threshold=ctx.context_warning_threshold,
+                    error_threshold=ctx.context_error_threshold,
+                )
+        llm_client = self.llm_client
+        object.__setattr__(
+            self,
+            "_context_manager",
+            ContextManager(
+                config=config,
+                model_name=model_name,
+                llm_client=llm_client,
+                on_status_event=on_status_event,
+            ),
+        )
+        # Initialize ToolResultStorage for Layer 2 (per-result persistence).
+        # Storage dir: {output_dir}/persisted_results/{conv_id}/, sibling of
+        # op_snapshots/. Falls back to DBGPT_HOME/workspace/persisted_results/.
+        self._init_tool_result_storage(config)
+        logger.info("Context management enabled for agent %s", self.name)
+
+    def _init_tool_result_storage(self, config: ContextBudgetConfig) -> None:
+        """Initialize the ToolResultStorage bound to this agent's conversation.
+
+        Resolves the storage directory from ``AgentContext.output_dir`` (or
+        ``DBGPT_HOME/workspace``) and binds it to the current async context
+        via ``set_current_storage`` so the standalone ``run_tool`` function
+        can pick it up without a signature change.
+        """
+        import os
+
+        from .context.storage import ToolResultStorage
+
+        ctx = self.agent_context
+        output_dir: Optional[str] = None
+        conv_id = ""
+        if ctx is not None:
+            output_dir = getattr(ctx, "output_dir", None)
+            conv_id = getattr(ctx, "conv_id", "") or ""
+        if not output_dir:
+            home = os.environ.get("DBGPT_HOME", os.path.expanduser("~/.dbgpt"))
+            output_dir = os.path.join(home, "workspace")
+        storage_dir = os.path.join(output_dir, "persisted_results")
+        if conv_id:
+            storage_dir = os.path.join(storage_dir, conv_id)
+        storage = ToolResultStorage(
+            storage_dir=storage_dir,
+            default_threshold=config.tool_result_threshold,
+            preview_size=config.preview_size,
+            tool_overrides=config.tool_overrides,
+        )
+        object.__setattr__(self, "_result_storage", storage)
 
     def check_available(self) -> None:
         """Check if the agent is available.
@@ -179,6 +261,68 @@ class ConversableAgent(Role, Agent):
 
     def bind(self, target: Any) -> "ConversableAgent":
         """Bind the resources to the agent."""
+        # Support binding Skill instances so agents can receive skills via .bind(skill)
+        # Allow binding of FileBasedSkill (Claude-style) by converting it to a
+        # core Skill instance. This lets callers pass either a core Skill or a
+        # file-based skill parser result.
+        try:
+            from dbgpt.agent.claude_skill import FileBasedSkill
+        except Exception:
+            FileBasedSkill = None  # type: ignore
+
+        # If a FileBasedSkill instance was provided, try to convert it into
+        # a core Skill so downstream code can treat skills uniformly.
+        if FileBasedSkill is not None and isinstance(target, FileBasedSkill):
+            try:
+                from dbgpt.agent.skill.base import Skill, SkillMetadata, SkillType
+
+                meta = target.metadata
+                skill_type_val = SkillType.Custom
+                if getattr(meta, "skill_type", None):
+                    try:
+                        skill_type_val = SkillType(meta.skill_type)
+                    except Exception:
+                        skill_type_val = SkillType.Custom
+
+                core_meta = SkillMetadata(
+                    name=meta.name,
+                    description=meta.description,
+                    version=getattr(meta, "version", "1.0.0") or "1.0.0",
+                    author=getattr(meta, "author", None),
+                    skill_type=skill_type_val,
+                    tags=getattr(meta, "tags", []) or [],
+                )
+
+                prompt_template = None
+                if hasattr(target, "get_prompt"):
+                    try:
+                        prompt_template = target.get_prompt()
+                    except Exception:
+                        pass
+                if prompt_template is None and hasattr(target, "instructions"):
+                    prompt_template = PromptTemplate.from_template(target.instructions)
+
+                skill_obj = Skill(
+                    metadata=core_meta,
+                    prompt_template=prompt_template,
+                    required_tools=getattr(meta, "required_tools", []) or [],
+                    required_knowledge=getattr(meta, "required_knowledge", []) or [],
+                    config=getattr(meta, "config", {}) or {},
+                )
+
+                # replace target with the constructed core Skill instance
+                target = skill_obj
+            except Exception:
+                # if conversion fails, continue and let subsequent checks handle it
+                pass
+
+        try:
+            # local import to avoid circular imports at module import time
+            from dbgpt.agent.skill.base import SkillBase
+
+            is_skill = isinstance(target, SkillBase)
+        except Exception:
+            is_skill = False
         if isinstance(target, LLMConfig):
             self.llm_config = target
         elif isinstance(target, GptsMemory):
@@ -191,6 +335,16 @@ class ConversableAgent(Role, Agent):
             self.memory = target
         elif isinstance(target, ProfileConfig):
             self.profile = target
+        elif is_skill:
+            # Bind skill to agent and adopt skill's prompt template as bind_prompt
+            # so the skill's instructions become the agent's system prompt.
+            self._skill = target
+            try:
+                prompt_template = getattr(target, "prompt_template", None)
+                if prompt_template is not None:
+                    self.bind_prompt = cast(Optional[PromptTemplate], prompt_template)
+            except Exception:
+                pass
         elif isinstance(target, type) and issubclass(target, Action):
             self.actions.append(target())
         elif isinstance(target, Action):
@@ -327,6 +481,21 @@ class ConversableAgent(Role, Agent):
         **kwargs,
     ) -> AgentMessage:
         """Generate a reply based on the received messages."""
+        stream_callback = kwargs.pop("stream_callback", None)
+
+        async def _emit_stream(event_type: str, payload: Dict[str, Any]) -> None:
+            if not stream_callback:
+                return
+            try:
+                if asyncio.iscoroutinefunction(stream_callback):
+                    await stream_callback(event_type, payload)
+                    return
+                result = stream_callback(event_type, payload)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.exception("stream_callback error")
+
         logger.info(
             f"generate agent reply!sender={sender}, rely_messages_len={rely_messages}"
         )
@@ -363,6 +532,7 @@ class ConversableAgent(Role, Agent):
 
             fail_reason = None
             current_retry_counter = 0
+            start_time = time.time()
             is_success = True
             observation = received_message.content or ""
             while current_retry_counter < self.max_retry_count:
@@ -402,10 +572,12 @@ class ConversableAgent(Role, Agent):
                 thinking_messages, resource_info = await self._load_thinking_messages(
                     received_message=received_message,
                     sender=sender,
+                    observation=observation,
                     rely_messages=rely_messages,
                     historical_dialogues=historical_dialogues,
                     context=reply_message.get_dict_context(),
                     is_retry_chat=is_retry_chat,
+                    current_retry_counter=current_retry_counter,
                 )
                 with root_tracer.start_span(
                     "agent.generate_reply.thinking",
@@ -417,14 +589,60 @@ class ConversableAgent(Role, Agent):
                     },
                 ) as span:
                     # 1.Think about how to do things
-                    llm_reply, model_name = await self.thinking(
-                        thinking_messages, sender
-                    )
+                    async def _llm_stream_callback(payload: Dict[str, Any]) -> None:
+                        await _emit_stream(
+                            "thinking_chunk",
+                            {
+                                "round": current_retry_counter + 1,
+                                "delta_text": payload.get("delta_text", ""),
+                                "delta_thinking": payload.get("delta_thinking", ""),
+                            },
+                        )
+
+                    try:
+                        llm_reply, model_name = await self.thinking(
+                            thinking_messages,
+                            sender,
+                            stream_callback=_llm_stream_callback,
+                        )
+                    except LLMChatError as e:
+                        # Layer 4: reactive compaction on context_too_long
+                        _ctx_mgr: Optional[ContextManager] = getattr(
+                            self, "_context_manager", None
+                        )
+                        err_str = str(e).lower()
+                        if _ctx_mgr and (
+                            "context_too_long" in err_str
+                            or "context_length_exceeded" in err_str
+                            or "maximum context length" in err_str
+                        ):
+                            logger.warning(
+                                "LLM context overflow detected — applying "
+                                "reactive compaction (Layer 4)"
+                            )
+                            thinking_messages = await _ctx_mgr.reactive_compact(
+                                thinking_messages
+                            )
+                            llm_reply, model_name = await self.thinking(
+                                thinking_messages,
+                                sender,
+                                stream_callback=_llm_stream_callback,
+                            )
+                        else:
+                            raise
                     reply_message.model_name = model_name
                     reply_message.content = llm_reply
                     reply_message.resource_info = resource_info
                     span.metadata["llm_reply"] = llm_reply
                     span.metadata["model_name"] = model_name
+                    await _emit_stream(
+                        "thinking",
+                        {
+                            "round": current_retry_counter + 1,
+                            "llm_reply": llm_reply,
+                            "model_name": model_name,
+                        },
+                    )
 
                 with root_tracer.start_span(
                     "agent.generate_reply.review",
@@ -468,6 +686,13 @@ class ConversableAgent(Role, Agent):
                     span.metadata["action_report"] = (
                         act_out.to_dict() if act_out else None
                     )
+                    await _emit_stream(
+                        "act",
+                        {
+                            "round": current_retry_counter + 1,
+                            "action_output": act_out.to_dict() if act_out else None,
+                        },
+                    )
 
                 with root_tracer.start_span(
                     "agent.generate_reply.verify",
@@ -493,6 +718,7 @@ class ConversableAgent(Role, Agent):
                         logger.warning("No retry available!")
                         break
                     fail_reason = reason
+                    observation = fail_reason
                     await self.write_memories(
                         question=question,
                         ai_message=ai_message,
@@ -514,6 +740,13 @@ class ConversableAgent(Role, Agent):
                     if self.run_mode != AgentRunMode.LOOP or act_out.terminate:
                         logger.debug(f"Agent {self.name} reply success!{reply_message}")
                         break
+                time_cost = time.time() - start_time
+                if time_cost > self.max_timeout:
+                    logger.warning(
+                        f"Agent {self.name} run time out!{time_cost} > "
+                        f"{self.max_timeout}"
+                    )
+                    break
 
                 # Continue to run the next round
                 current_retry_counter += 1
@@ -543,6 +776,7 @@ class ConversableAgent(Role, Agent):
         messages: List[AgentMessage],
         sender: Optional[Agent] = None,
         prompt: Optional[str] = None,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Think and reason about the current task goal.
 
@@ -575,6 +809,7 @@ class ConversableAgent(Role, Agent):
                     conv_id=self.not_null_agent_context.conv_id,
                     sender=sender.role if sender else "?",
                     stream_out=self.stream_out,
+                    stream_callback=stream_callback,
                 )
                 return response, llm_model
             except LLMChatError as e:
@@ -603,41 +838,56 @@ class ConversableAgent(Role, Agent):
         **kwargs,
     ) -> ActionOutput:
         """Perform actions."""
-        last_out: Optional[ActionOutput] = None
-        for i, action in enumerate(self.actions):
-            if not message:
-                raise ValueError("The message content is empty!")
+        # Bind this agent's ToolResultStorage to the current async context so
+        # the standalone run_tool() can access it for oversized-result
+        # persistence. The token is reset to its previous value after act().
+        from .context.storage import get_current_storage, set_current_storage
 
-            with root_tracer.start_span(
-                "agent.act.run",
-                metadata={
-                    "message": message,
-                    "sender": sender.name if sender else None,
-                    "recipient": self.name,
-                    "reviewer": reviewer.name if reviewer else None,
-                    "rely_action_out": last_out.to_dict() if last_out else None,
-                    "conv_uid": self.not_null_agent_context.conv_id,
-                    "action_index": i,
-                    "total_action": len(self.actions),
-                },
-            ) as span:
-                ai_message = message.content if message.content else ""
-                real_action = action.parse_action(
-                    ai_message, default_action=action, **kwargs
-                )
-                if real_action is None:
-                    continue
+        prev_storage = get_current_storage()
+        bound_storage = getattr(self, "_result_storage", None)
+        if bound_storage is not None:
+            set_current_storage(bound_storage)
+        try:
+            last_out: Optional[ActionOutput] = None
+            for i, action in enumerate(self.actions):
+                if not message:
+                    raise ValueError("The message content is empty!")
 
-                last_out = await real_action.run(
-                    ai_message=message.content if message.content else "",
-                    resource=None,
-                    rely_action_out=last_out,
-                    **kwargs,
-                )
-                span.metadata["action_out"] = last_out.to_dict() if last_out else None
-        if not last_out:
-            raise ValueError("Action should return value！")
-        return last_out
+                with root_tracer.start_span(
+                    "agent.act.run",
+                    metadata={
+                        "message": message,
+                        "sender": sender.name if sender else None,
+                        "recipient": self.name,
+                        "reviewer": reviewer.name if reviewer else None,
+                        "rely_action_out": last_out.to_dict() if last_out else None,
+                        "conv_uid": self.not_null_agent_context.conv_id,
+                        "action_index": i,
+                        "total_action": len(self.actions),
+                    },
+                ) as span:
+                    ai_message = message.content if message.content else ""
+                    real_action = action.parse_action(
+                        ai_message, default_action=action, **kwargs
+                    )
+                    if real_action is None:
+                        continue
+
+                    last_out = await real_action.run(
+                        ai_message=message.content if message.content else "",
+                        resource=None,
+                        rely_action_out=last_out,
+                        **kwargs,
+                    )
+                    span.metadata["action_out"] = (
+                        last_out.to_dict() if last_out else None
+                    )
+            if not last_out:
+                raise ValueError("Action should return value！")
+            return last_out
+        finally:
+            # Restore the previous storage binding (supports nested agent calls).
+            set_current_storage(prev_storage)
 
     async def correctness_check(
         self, message: AgentMessage
@@ -949,7 +1199,7 @@ class ConversableAgent(Role, Agent):
             if can_uses and len(can_uses) > 0:
                 return can_uses[0]
             else:
-                raise ValueError("No model service available!")
+                return "deepseek-chat"
         except Exception as e:
             logger.error(f"{self.role} get next llm failed!{str(e)}")
             raise ValueError(f"Failed to allocate model service,{str(e)}!")
@@ -1043,17 +1293,26 @@ class ConversableAgent(Role, Agent):
         """Build system prompt."""
         system_prompt = None
         if self.bind_prompt:
+
+            class _SafeDict(dict):
+                def __missing__(self, key):
+                    return ""
+
             prompt_param = {}
             if resource_vars:
                 prompt_param.update(resource_vars)
             if context:
                 prompt_param.update(context)
             if self.bind_prompt.template_format == "f-string":
-                system_prompt = self.bind_prompt.template.format(
-                    **prompt_param,
-                )
+                system_prompt = self.bind_prompt.format(**prompt_param)
             elif self.bind_prompt.template_format == "jinja2":
-                system_prompt = Template(self.bind_prompt.template).render(prompt_param)
+                # Render in a sandbox: bind_prompt.template may contain
+                # user-controlled content (e.g. a selected skill's instructions),
+                # so a plain jinja2.Template would allow SSTI -> RCE.
+                _env = SandboxedEnvironment()
+                system_prompt = _env.from_string(self.bind_prompt.template).render(
+                    prompt_param
+                )
             else:
                 logger.warning("Bind prompt template not exsit or  format not support!")
         if not system_prompt:
@@ -1072,19 +1331,33 @@ class ConversableAgent(Role, Agent):
         self,
         received_message: AgentMessage,
         sender: Agent,
+        observation: Optional[str] = None,
         rely_messages: Optional[List[AgentMessage]] = None,
         historical_dialogues: Optional[List[AgentMessage]] = None,
         context: Optional[Dict[str, Any]] = None,
         is_retry_chat: bool = False,
+        current_retry_counter: Optional[int] = None,
     ) -> Tuple[List[AgentMessage], Optional[Dict]]:
-        observation = received_message.content
-        if not observation:
+        question = received_message.content
+        observation = observation or question
+        if not question:
             raise ValueError("The received message content is empty!")
+        most_recent_memories = ""
+        memory_list = []
+        # Read the memories according to the current observation
         memories = await self.read_memories(observation)
-        has_memories = True if memories else False
+        if isinstance(memories, list):
+            memory_list = memories
+        else:
+            most_recent_memories = memories
         reply_message_str = ""
         if context is None:
             context = {}
+        # Inject task progress summary so the LLM always knows what has been done
+        # regardless of how many memory fragments have been evicted from the buffer.
+        task_progress = self.task_progress_summary
+        if task_progress:
+            context["task_progress"] = task_progress
         if rely_messages:
             copied_rely_messages = [m.copy() for m in rely_messages]
             # When directly relying on historical messages, use the execution result
@@ -1102,8 +1375,9 @@ class ConversableAgent(Role, Agent):
                     elif message.role == ModelMessageRoleType.AI:
                         reply_message_str += f"Observation: {message.content}\n"
         if reply_message_str:
-            memories += "\n" + reply_message_str
+            most_recent_memories += "\n" + reply_message_str
         try:
+            # Load the resource prompt according to the current observation
             resource_prompt_str, resource_references = await self.load_resource(
                 observation, is_retry_chat=is_retry_chat
             )
@@ -1114,21 +1388,19 @@ class ConversableAgent(Role, Agent):
         resource_vars = await self.generate_resource_variables(resource_prompt_str)
 
         system_prompt = await self.build_system_prompt(
-            question=observation,
-            most_recent_memories=memories,
+            question=question,
+            most_recent_memories=most_recent_memories,
             resource_vars=resource_vars,
             context=context,
             is_retry_chat=is_retry_chat,
         )
         user_prompt = await self.build_prompt(
-            question=observation,
+            question=question,
             is_system=False,
-            most_recent_memories=memories,
+            most_recent_memories=most_recent_memories,
             resource_vars=resource_vars,
             **context,
         )
-        if not user_prompt:
-            user_prompt = f"Observation: {observation}"
 
         agent_messages = []
         if system_prompt:
@@ -1138,29 +1410,44 @@ class ConversableAgent(Role, Agent):
                     role=ModelMessageRoleType.SYSTEM,
                 )
             )
-        if historical_dialogues and not has_memories:
-            # If we can't read the memory, we need to rely on the historical dialogue
+        if historical_dialogues:
+            # Always pass the full prior Q&A dialogue to the model (multi-turn
+            # follow-ups need the earlier turns), independent of whether memory
+            # fragments were also read. Even index = user, odd index = AI.
             for i in range(len(historical_dialogues)):
                 if i % 2 == 0:
-                    # The even number starts, and the even number is the user
-                    # information
                     message = historical_dialogues[i]
                     message.role = ModelMessageRoleType.HUMAN
                     agent_messages.append(message)
                 else:
-                    # The odd number is AI information
                     message = historical_dialogues[i]
                     message.role = ModelMessageRoleType.AI
                     agent_messages.append(message)
 
-        # Current user input information
-        agent_messages.append(
-            AgentMessage(
-                content=user_prompt,
-                role=ModelMessageRoleType.HUMAN,
-            )
-        )
+        if memory_list:
+            agent_messages.extend(memory_list)
 
+        # Multi-layer context management: compress if budget exceeded
+        ctx_mgr: Optional[ContextManager] = getattr(self, "_context_manager", None)
+        if ctx_mgr is not None:
+            agent_messages = await ctx_mgr.manage_context(
+                messages=agent_messages,
+                current_round=current_retry_counter or 0,
+                task_progress=task_progress,
+            )
+
+        # Current user input information
+        if not user_prompt and (not memory_list or not current_retry_counter):
+            # The user prompt is empty, and the current retry count is 0 or the memory
+            # is empty
+            user_prompt = f"Observation: {observation}"
+        if user_prompt:
+            agent_messages.append(
+                AgentMessage(
+                    content=user_prompt,
+                    role=ModelMessageRoleType.HUMAN,
+                )
+            )
         return agent_messages, resource_references
 
 

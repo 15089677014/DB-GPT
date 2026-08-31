@@ -1,7 +1,11 @@
 """Agent memory module."""
 
+import json
+import logging
 from datetime import datetime
-from typing import Callable, List, Optional, Type, cast
+from typing import Callable, List, Optional, Type, Union, cast
+
+from typing_extensions import TypedDict
 
 from dbgpt.core import LLMClient
 from dbgpt.util.annotations import immutable, mutable
@@ -18,6 +22,21 @@ from .base import (
 )
 from .gpts import GptsMemory, GptsMessageMemory, GptsPlansMemory
 
+logger = logging.getLogger(__name__)
+
+
+class StructuredObservation(TypedDict, total=False):
+    """Structured observation for agent memory."""
+
+    question: Optional[str]
+    thought: Optional[str]
+    phase: Optional[str]
+    action_intention: Optional[str]
+    action_reason: Optional[str]
+    action: Optional[str]
+    action_input: Optional[str]
+    observation: Optional[str]
+
 
 class AgentMemoryFragment(MemoryFragment):
     """Default memory fragment for agent memory."""
@@ -30,6 +49,7 @@ class AgentMemoryFragment(MemoryFragment):
         importance: Optional[float] = None,
         last_accessed_time: Optional[datetime] = None,
         is_insight: bool = False,
+        snapshot_path: Optional[str] = None,
     ):
         """Create a memory fragment."""
         if not memory_id:
@@ -41,6 +61,7 @@ class AgentMemoryFragment(MemoryFragment):
         self._importance: Optional[float] = importance
         self._last_accessed_time: Optional[datetime] = last_accessed_time
         self._is_insight = is_insight
+        self.snapshot_path: Optional[str] = snapshot_path
 
     @property
     def id(self) -> int:
@@ -144,6 +165,7 @@ class AgentMemoryFragment(MemoryFragment):
         importance: Optional[float] = None,
         is_insight: bool = False,
         last_accessed_time: Optional[datetime] = None,
+        snapshot_path: Optional[str] = None,
         **kwargs,
     ) -> "AgentMemoryFragment":
         """Build a memory fragment from the given parameters."""
@@ -154,6 +176,7 @@ class AgentMemoryFragment(MemoryFragment):
             importance=importance,
             last_accessed_time=last_accessed_time,
             is_insight=is_insight,
+            snapshot_path=snapshot_path,
         )
 
     def copy(self: "AgentMemoryFragment") -> "AgentMemoryFragment":
@@ -165,7 +188,96 @@ class AgentMemoryFragment(MemoryFragment):
             importance=self.importance,
             last_accessed_time=self.last_accessed_time,
             is_insight=self.is_insight,
+            snapshot_path=self.snapshot_path,
         )
+
+
+class StructuredAgentMemoryFragment(AgentMemoryFragment):
+    """Structured memory fragment for agent memory."""
+
+    def __init__(
+        self,
+        observation: Union[StructuredObservation, List[StructuredObservation]],
+        embeddings: Optional[List[float]] = None,
+        memory_id: Optional[int] = None,
+        importance: Optional[float] = None,
+        last_accessed_time: Optional[datetime] = None,
+        is_insight: bool = False,
+    ):
+        """Create a structured memory fragment."""
+        super().__init__(
+            observation=self.to_raw_observation(observation),
+            embeddings=embeddings,
+            memory_id=memory_id,
+            importance=importance,
+            last_accessed_time=last_accessed_time,
+            is_insight=is_insight,
+        )
+        self._structured_observation = observation
+
+    def to_raw_observation(
+        self, observation: Union[StructuredObservation, List[StructuredObservation]]
+    ) -> str:
+        """Convert the structured observation to a raw observation.
+
+        Args:
+            observation(StructuredObservation): Structured observation
+
+        Returns:
+            str: Raw observation
+        """
+        return json.dumps(observation, ensure_ascii=False)
+
+    @classmethod
+    def build_from(
+        cls: Type["AgentMemoryFragment"],
+        observation: Union[str, StructuredObservation],
+        embeddings: Optional[List[float]] = None,
+        memory_id: Optional[int] = None,
+        importance: Optional[float] = None,
+        is_insight: bool = False,
+        last_accessed_time: Optional[datetime] = None,
+        **kwargs,
+    ) -> "AgentMemoryFragment":
+        """Build a memory fragment from the given parameters."""
+        if isinstance(observation, str):
+            observation = json.loads(observation)
+        return cls(
+            observation=observation,
+            embeddings=embeddings,
+            memory_id=memory_id,
+            importance=importance,
+            last_accessed_time=last_accessed_time,
+            is_insight=is_insight,
+        )
+
+    def reduce(
+        self, memory_fragments: List["StructuredAgentMemoryFragment"], **kwargs
+    ) -> "StructuredAgentMemoryFragment":
+        """Reduce memory fragments to a single memory fragment.
+
+        Args:
+            memory_fragments(List[T]): Memory fragments
+
+        Returns:
+            T: The reduced memory fragment
+        """
+        if len(memory_fragments) == 0:
+            raise ValueError("Memory fragments is empty.")
+        if len(memory_fragments) == 1:
+            return memory_fragments[0]
+
+        obs = []
+        for memory_fragment in memory_fragments:
+            try:
+                obs.append(json.loads(memory_fragment.raw_observation))
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse observation %s: %s",
+                    memory_fragment.raw_observation,
+                    e,
+                )
+        return self.current_class.build_from(obs, **kwargs)  # type: ignore
 
 
 class AgentMemory(Memory[AgentMemoryFragment]):

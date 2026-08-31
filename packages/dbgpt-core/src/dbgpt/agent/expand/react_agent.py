@@ -1,5 +1,6 @@
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from dbgpt._private.pydantic import Field
 from dbgpt.agent import (
@@ -11,12 +12,14 @@ from dbgpt.agent import (
     ProfileConfig,
     Resource,
     ResourceType,
+    StructuredAgentMemoryFragment,
 )
 from dbgpt.agent.core.role import AgentRunMode
 from dbgpt.agent.resource import BaseTool, ResourcePack, ToolPack
 from dbgpt.agent.util.react_parser import ReActOutputParser
 from dbgpt.util.configure import DynConfig
 
+from ...core import ModelMessageRoleType
 from .actions.react_action import ReActAction, Terminate
 
 logger = logging.getLogger(__name__)
@@ -30,50 +33,60 @@ selecting the right ACTION from the ACTION SPACE as best as you can.
 _REACT_SYSTEM_TEMPLATE = """\
 You are a {{ role }}, {% if name %}named {{ name }}. {% endif %}\
 {{ goal }}
-
-You can only use one action in the actions provided in the ACTION SPACE to solve the \
 task. For each step, you must output an Action; it cannot be empty. The maximum number \
 of steps you can take is {{ max_steps }}.
 Do not output an empty string!
-
-# ACTION SPACE #
 {{ action_space }}
+# RESPONSE FORMAT #
+IMPORTANT:
+- You must never answer directly outside the ReAct format.
+- Every response must contain exactly one Action and one Action Input.
+- If the task is complete, use exactly:
+Thought: ...
+Phase: 返回最终结果
+Action: terminate
+Action Input: {"result": "final answer"}
+- Do not put the final answer as plain markdown outside Action Input.
 
-# RESPONSE FROMAT # 
 For each task input, your response should contain:
 1. One analysis of the task and the current environment, reasoning to determine the \
 next action (prefix "Thought: ").
-2. One action string in the ACTION SPACE (prefix "Action: "), should be one of \
+2. What this step is trying to do (prefix "Action Intention: "), short and \
+user-facing.
+3. Why this action is needed now (prefix "Action Reason: "), short and \
+user-facing.
+4. One action string in the ACTION SPACE (prefix "Action: "), should be one of \
 [{{ action_space_names }}].
-3. One action input (prefix "Action Input: "), empty if no input is required.
-
+5. One action input (prefix "Action Input: "), empty if no input is required.
 # EXAMPLE INTERACTION #
-Observation: ...(This is output provided by the external environment or Action output, \
-you are not allowed to generate it.)
-
-Thought: ...
+Thought: ...(Your analysis of the task and reasoning for the next action.)
+Action Intention: ...(What this step will do, e.g. "探索数据结构")
+Action Reason: ...(Why this action is needed now)
 Action: ...
 Action Input: ...
-
-################### TASK ###################
+Observation: ...(This is output provided by the external environment or Action output, \
+you are not allowed to generate it.)
+{% if task_progress %}
+{{ task_progress }}
+You MUST NOT repeat any action already listed above as ✅ completed.
+Pick the NEXT action that has NOT been done yet to make progress toward the final goal.
+{% endif %}
 Please Solve this task:
-
 {{ question }}\
-
 Please answer in the same language as the user's question.
 The current time is: {{ now_time }}.
 """
-_REACT_USER_TEMPLATE = """\
-{% if most_recent_memories %}\
-Most recent message:
-{{ most_recent_memories }}
-{% endif %}\
-"""
+
+# Not needed additional user prompt template
+_REACT_USER_TEMPLATE = """"""
 
 
 _REACT_WRITE_MEMORY_TEMPLATE = """\
 {% if question %}Question: {{ question }} {% endif %}
 {% if thought %}Thought: {{ thought }} {% endif %}
+{% if phase %}Phase: {{ phase }} {% endif %}
+{% if action_intention %}Action Intention: {{ action_intention }} {% endif %}
+{% if action_reason %}Action Reason: {{ action_reason }} {% endif %}
 {% if action %}Action: {{ action }} {% endif %}
 {% if action_input %}Action Input: {{ action_input }} {% endif %}
 {% if observation %}Observation: {{ observation }} {% endif %}
@@ -81,7 +94,7 @@ _REACT_WRITE_MEMORY_TEMPLATE = """\
 
 
 class ReActAgent(ConversableAgent):
-    max_retry_count: int = 15
+    max_retry_count: int = 30
     run_mode: AgentRunMode = AgentRunMode.LOOP
 
     profile: ProfileConfig = ProfileConfig(
@@ -111,6 +124,13 @@ class ReActAgent(ConversableAgent):
         super().__init__(**kwargs)
 
         self._init_actions([ReActAction, Terminate])
+
+        # Auto-enable multi-layer context management if configured
+        if (
+            self.agent_context is not None
+            and self.agent_context.enable_context_management
+        ):
+            self.init_context_management()
 
     async def _a_init_reply_message(
         self,
@@ -222,10 +242,13 @@ class ReActAgent(ConversableAgent):
         if not message_content:
             raise ValueError("The response is empty.")
         try:
-            steps = self.parser.parse(message_content)
+            steps = self.parser.parse_current_step(message_content)
             err_msg = None
             if not steps:
-                err_msg = "No correct response found."
+                err_msg = (
+                    "No correct response found. Please check your response, which must"
+                    " be in the format indicated in the system prompt."
+                )
             elif len(steps) != 1:
                 err_msg = "Only one action is allowed each time."
             if err_msg:
@@ -243,56 +266,100 @@ class ReActAgent(ConversableAgent):
         )
         return action_output
 
-    async def write_memories(
+    @property
+    def memory_fragment_class(self) -> Type[AgentMemoryFragment]:
+        """Return the memory fragment class."""
+        return StructuredAgentMemoryFragment
+
+    async def read_memories(
         self,
-        question: str,
-        ai_message: str,
-        action_output: Optional[ActionOutput] = None,
-        check_pass: bool = True,
-        check_fail_reason: Optional[str] = None,
-        current_retry_counter: Optional[int] = None,
-    ) -> AgentMemoryFragment:
-        """Write the memories to the memory.
+        observation: str,
+    ) -> Union[str, List["AgentMessage"]]:
+        memories = await self.memory.read(observation)
+        not_json_memories = []
+        messages = []
+        structured_memories = []
+        # Pair each parsed dict with its originating fragment so we can access
+        # snapshot_path later.
+        fragment_by_mem: dict = {}
+        for m in memories:
+            if m.raw_observation:
+                try:
+                    mem_dict = json.loads(m.raw_observation)
+                    if isinstance(mem_dict, dict):
+                        structured_memories.append(mem_dict)
+                        fragment_by_mem[id(mem_dict)] = m
+                    elif isinstance(mem_dict, list):
+                        for item in mem_dict:
+                            structured_memories.append(item)
+                            fragment_by_mem[id(item)] = m
+                    else:
+                        raise ValueError("Invalid memory format.")
+                except Exception:
+                    not_json_memories.append(m.raw_observation)
 
-        We suggest you to override this method to save the conversation to memory
-        according to your needs.
+        for mem_dict in structured_memories:
+            fragment = fragment_by_mem.get(id(mem_dict))
+            snapshot_path = getattr(fragment, "snapshot_path", None)
 
-        Args:
-            question(str): The question received.
-            ai_message(str): The AI message, LLM output.
-            action_output(ActionOutput): The action output.
-            check_pass(bool): Whether the check pass.
-            check_fail_reason(str): The check fail reason.
+            question = mem_dict.get("question")
+            thought = mem_dict.get("thought")
+            phase = mem_dict.get("phase")
+            action = mem_dict.get("action")
+            action_input = mem_dict.get("action_input")
+            observation = mem_dict.get("observation")
+            persisted_path = mem_dict.get("persisted_path")
+            if question:
+                messages.append(
+                    AgentMessage(
+                        content=f"Question: {question}",
+                        role=ModelMessageRoleType.HUMAN,
+                    )
+                )
+            ai_content = []
+            if thought:
+                ai_content.append(f"Thought: {thought}")
+            if phase:
+                ai_content.append(f"Phase: {phase}")
+            if action:
+                ai_content.append(f"Action: {action}")
+            if action_input:
+                ai_content.append(f"Action Input: {action_input}")
+            messages.append(
+                AgentMessage(
+                    content="\n".join(ai_content),
+                    role=ModelMessageRoleType.AI,
+                )
+            )
 
-        Returns:
-            AgentMemoryFragment: The memory fragment created.
-        """
-        if not action_output:
-            raise ValueError("Action output is required to save to memory.")
+            if observation:
+                # If the observation is a <persisted-output> preview block it
+                # already carries the file path, so we don't append the
+                # snapshot suffix. We still record snapshot_path / persisted_path
+                # in the message context so Layer 1 compaction can recognize
+                # size-bounded observations and skip them.
+                is_persisted = "<persisted-output>" in observation
+                obs_context: dict = {}
+                if snapshot_path:
+                    obs_context["snapshot_path"] = snapshot_path
+                if persisted_path:
+                    obs_context["persisted_path"] = persisted_path
+                obs_suffix = ""
+                if not is_persisted and snapshot_path:
+                    obs_suffix = f"\n[Full detail available at: {snapshot_path}]"
+                messages.append(
+                    AgentMessage(
+                        content=f"Observation: {observation}{obs_suffix}",
+                        role=ModelMessageRoleType.HUMAN,
+                        context=obs_context if obs_context else None,
+                    )
+                )
 
-        mem_thoughts = action_output.thoughts or ai_message
-        action = action_output.action
-        action_input = action_output.action_input
-        observation = check_fail_reason or action_output.observations
-
-        memory_map = {
-            "thought": mem_thoughts,
-            "action": action,
-            "observation": observation,
-        }
-        if action_input:
-            memory_map["action_input"] = action_input
-
-        if current_retry_counter is not None and current_retry_counter == 0:
-            memory_map["question"] = question
-
-        write_memory_template = self.write_memory_template
-        memory_content = self._render_template(write_memory_template, **memory_map)
-        fragment = AgentMemoryFragment(memory_content)
-        await self.memory.write(fragment)
-        action_output.memory_fragments = {
-            "memory": fragment.raw_observation,
-            "id": fragment.id,
-            "importance": fragment.importance,
-        }
-        return fragment
+        if not messages and not_json_memories:
+            messages.append(
+                AgentMessage(
+                    content="\n".join(not_json_memories),
+                    role=ModelMessageRoleType.HUMAN,
+                )
+            )
+        return messages

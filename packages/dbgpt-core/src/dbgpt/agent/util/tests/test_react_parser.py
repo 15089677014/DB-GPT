@@ -41,6 +41,26 @@ Observation: 4"""
         assert steps[0].observation == "4"
         assert steps[0].is_terminal is False
 
+    def test_parsing_with_action_intention_and_reason(self):
+        """Test parsing with optional action intention and reason fields."""
+        parser = ReActOutputParser()
+        text = """Thought: I need to inspect the database schema.
+Action Intention: Query the available asset categories.
+Action Reason: The user asked about assets by major type.
+Action: query_db
+Action Input: {"sql": "select distinct major_type from assets"}"""
+
+        steps = parser.parse(text)
+
+        assert len(steps) == 1
+        assert steps[0].thought == "I need to inspect the database schema."
+        assert steps[0].action_intention == "Query the available asset categories."
+        assert steps[0].action_reason == "The user asked about assets by major type."
+        assert steps[0].action == "query_db"
+        assert steps[0].action_input == {
+            "sql": "select distinct major_type from assets"
+        }
+
     def test_terminal_action(self):
         """Test parsing of a terminal action."""
         parser = ReActOutputParser()
@@ -59,6 +79,17 @@ Action Input: {"output": "The answer is 4"}"""
         # Test get_final_output
         final_output = parser.get_final_output(steps)
         assert final_output == "The answer is 4"
+
+    def test_terminal_action_with_result_key(self):
+        """Test parsing of the agentic terminal action format."""
+        parser = ReActOutputParser()
+        text = """Thought: I've finished the calculation.
+Action: terminate
+Action Input: {"result": "The answer is 4"}"""
+
+        steps = parser.parse(text)
+
+        assert parser.get_final_output(steps) == "The answer is 4"
 
     def test_multi_step_parsing(self):
         """Test parsing of multiple steps."""
@@ -402,3 +433,171 @@ print("Hello, world!")
         )
         assert steps[0].observation is None
         assert steps[0].is_terminal is False
+
+    def test_parsing_with_leading_vis_thinking_block(self):
+        """Test parsing when reasoning UI markup precedes the ReAct response."""
+        parser = ReActOutputParser()
+        text = """``````vis-thinking
+I should decide which tool to use first.
+``````
+Thought: I should calculate 2+2.
+Action: calculator
+Action Input: {"operation": "add", "a": 2, "b": 2}"""
+
+        steps = parser.parse(text)
+
+        assert len(steps) == 1
+        assert steps[0].thought == "I should calculate 2+2."
+        assert steps[0].action == "calculator"
+
+    def test_parsing_with_markdown_code_fence_wrapper(self):
+        """Test parsing when the model wraps the whole response in a code fence."""
+        parser = ReActOutputParser()
+        text = """```text
+Thought: I should calculate 2+2.
+Action: calculator
+Action Input: {"operation": "add", "a": 2, "b": 2}
+```"""
+
+        steps = parser.parse(text)
+
+        assert len(steps) == 1
+        assert steps[0].thought == "I should calculate 2+2."
+        assert steps[0].action == "calculator"
+
+    def test_parse_current_step_uses_first_action_for_multi_round_output(self):
+        """Use the first action when a model emits multiple ReAct rounds at once."""
+        parser = ReActOutputParser()
+        text = """Thought: I need to query the database first.
+Action: query_db
+Action Input: {"sql": "select count(*) from assets"}
+Observation: 30
+
+Thought: I already know the answer.
+Action: terminate
+Action Input: {"result": "网络设备资产共 30 条"}"""
+
+        all_steps = parser.parse(text)
+        current_steps = parser.parse_current_step(text)
+
+        assert len(all_steps) == 2
+        assert len(current_steps) == 1
+        assert current_steps[0].action == "query_db"
+        assert current_steps[0].action_input == {"sql": "select count(*) from assets"}
+
+    def test_react_markers_inside_action_input_code_fence_are_not_steps(self):
+        """Do not split Action Input code fences that mention ReAct labels."""
+        parser = ReActOutputParser()
+        text = """Thought: I need to create a prompt file.
+Action: CreateFile
+Action Input: CreateFile(filepath="prompt.txt"):
+```
+Thought: this is documentation, not a new ReAct step.
+Action: example_tool
+Action Input: {"demo": true}
+```"""
+
+        steps = parser.parse(text)
+
+        assert len(steps) == 1
+        assert steps[0].action == "CreateFile"
+        assert "Thought: this is documentation" in steps[0].action_input
+        assert "Action: example_tool" in steps[0].action_input
+
+    def test_special_tokens_leaked_as_text_are_stripped(self):
+        """Model servers may leak inference special tokens (e.g. Kimi
+        ``<|tool_call_end|>``) as plain text glued to the content tail.
+        They must be stripped before parsing so the Action Input JSON tail
+        stays parseable — otherwise the whole final-answer extraction
+        chain collapses to raw model text."""
+        parser = ReActOutputParser()
+        text = (
+            "Thought: 需要按照指定格式调用 terminate 工具。\n"
+            "Action: terminate\n"
+            'Action Input: {"result": "时长最长的 3 首曲目是：'
+            '1. Occupation / Precipice"}'
+            "<|tool_call_end|><|tool_calls_section_end|>"
+        )
+
+        steps = parser.parse(text)
+
+        assert len(steps) == 1
+        assert steps[0].action == "terminate"
+        assert steps[0].is_terminal
+        assert steps[0].action_input == {
+            "result": "时长最长的 3 首曲目是：1. Occupation / Precipice"
+        }
+        assert parser.get_final_output(steps) is not None
+
+    def test_special_tokens_do_not_eat_multiline_markdown_tables(self):
+        """Markdown table pipes must survive the special-token stripping:
+        ``| a | b |`` has no ``<|...|>`` pair and stays intact."""
+        parser = ReActOutputParser()
+        text = (
+            "Thought: done\n"
+            "Action: terminate\n"
+            'Action Input: {"result": "| 曲目 | 时长 |\\n|---|---|\\n| A | 88 |"}'
+        )
+
+        steps = parser.parse(text)
+
+        assert steps[0].action_input == {
+            "result": "| 曲目 | 时长 |\n|---|---|\n| A | 88 |"
+        }
+
+    def test_native_tool_call_block_is_translated(self):
+        """Kimi-style native tool calls leaked as plain text (no ReAct
+        labels at all) must be translated into an actionable step —
+        otherwise every such round burns a format-error retry."""
+        parser = ReActOutputParser()
+        text = (
+            "我来帮你分析track.csv文件，找出时长最长的3首曲目。"
+            "<|tool_calls_section_begin|><|tool_call_begin|>"
+            "functions.load_file:0<|tool_call_argument_begin|>{}"
+            "<|tool_call_end|><|tool_calls_section_end|>"
+        )
+
+        steps = parser.parse_current_step(text)
+
+        assert len(steps) == 1
+        assert steps[0].action == "load_file"
+        assert steps[0].action_input == {}
+
+    def test_native_tool_call_with_spaces_and_json_arguments(self):
+        """Space-separated markers and a large JSON argument payload."""
+        parser = ReActOutputParser()
+        text = (
+            " <|tool_calls_section_begin|> <|tool_call_begin|> "
+            "functions.code_interpreter:1 <|tool_call_argument_begin|> "
+            '{"code": "print(\\"hi\\")"} '
+            "<|tool_call_end|> <|tool_calls_section_end|>"
+        )
+
+        steps = parser.parse_current_step(text)
+
+        assert len(steps) == 1
+        assert steps[0].action == "code_interpreter"
+        assert steps[0].action_input == {"code": 'print("hi")'}
+
+    def test_native_terminate_call_extracts_final_output(self):
+        """A native terminate call must yield the result via the standard
+        final-output extraction path."""
+        parser = ReActOutputParser()
+        text = (
+            "<|tool_calls_section_begin|><|tool_call_begin|>"
+            "functions.terminate:0<|tool_call_argument_begin|>"
+            '{"result": "最终答案"}<|tool_call_end|><|tool_calls_section_end|>'
+        )
+
+        steps = parser.parse_current_step(text)
+
+        assert steps[0].action == "terminate"
+        assert steps[0].is_terminal
+        assert parser.get_final_output(steps) == "最终答案"
+
+    def test_plain_answer_without_labels_is_still_rejected(self):
+        """A bare answer (no ReAct labels, no native call) stays unparseable
+        so the agent keeps its format-error retry semantics."""
+        parser = ReActOutputParser()
+
+        assert parser.parse("根据分析，答案是 42。") == []

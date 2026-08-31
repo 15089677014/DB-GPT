@@ -18,15 +18,19 @@ export type DBType =
   | 'clickhouse'
   | 'oracle'
   | 'postgresql'
+  | 'openGauss'
   | 'vertica'
   | 'db2'
   | 'access'
   | 'mongodb'
   | 'starrocks'
+  | 'maxcompute'
   | 'hbase'
   | 'redis'
   | 'cassandra'
   | 'couchbase'
+  | 'tugraph'
+  | 'neo4j'
   | (string & {});
 
 export type IChatDbSchema = {

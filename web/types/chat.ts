@@ -1,3 +1,4 @@
+import type { AgentCitation } from '@/utils/react-agent-final';
 import { ParamNeed } from './app';
 
 // Define the content types for the message object
@@ -67,6 +68,8 @@ export type IChatDialogueSchema = {
   select_param: string;
   app_code: string;
   param_need?: ParamNeed[];
+  gmt_created?: string;
+  gmt_modified?: string;
 };
 
 export type UserParam = {
@@ -83,6 +86,14 @@ export type UserParamResponse = {
 
 export type DialogueListResponse = IChatDialogueSchema[];
 
+export type PaginationResult<T> = {
+  items: T[];
+  total_count: number;
+  total_pages: number;
+  page: number;
+  page_size: number;
+};
+
 export type IChatDialogueMessageSchema = {
   role: 'human' | 'view' | 'system' | 'ai';
   context: string;
@@ -93,6 +104,8 @@ export type IChatDialogueMessageSchema = {
   thinking?: boolean;
   outing?: boolean;
   feedback?: Record<string, any>;
+  /** Structured knowledge sources attached to an agent final answer. */
+  citations?: AgentCitation[];
 };
 
 export type ModelType =

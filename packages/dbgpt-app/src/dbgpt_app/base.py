@@ -104,7 +104,32 @@ def _migration_db_storage(
     from dbgpt_app.initialization.db_model_initialization import _MODELS  # noqa: F401
     from dbgpt_ext.datasource.rdbms.conn_sqlite import SQLiteConnectorParameters
 
-    default_meta_data_path = os.path.join(PILOT_PATH, "meta_data")
+    # Derive meta_data path from the resolved db path when available.
+    # For pip-installed users, db_params.path is an absolute path like
+    # ~/.dbgpt/workspace/pilot/meta_data/dbgpt.db (already resolved by
+    # _initialize_db_storage), so we use its parent directory. For source-code
+    # developers with relative paths, we fall back to PILOT_PATH/meta_data.
+    if (
+        isinstance(db_params, SQLiteConnectorParameters)
+        and hasattr(db_params, "path")
+        and db_params.path
+        and os.path.isabs(db_params.path)
+    ):
+        default_meta_data_path = os.path.dirname(db_params.path)
+    else:
+        default_meta_data_path = os.path.join(PILOT_PATH, "meta_data")
+    from dbgpt_app.initialization.workspace_provisioning import _ensure_pilot_workspace
+
+    # Provision pilot workspace template files for pip-installed users.
+    # dest_root is the parent of meta_data/ (e.g. ~/.dbgpt/workspace/pilot/)
+    pilot_root = os.path.dirname(default_meta_data_path)
+    _ensure_pilot_workspace(pilot_root)
+
+    # Provision builtin skills for pip-installed users.
+    from dbgpt.configs.model_config import SKILLS_DIR
+    from dbgpt_app.initialization.skills_provisioning import ensure_builtin_skills
+
+    ensure_builtin_skills(SKILLS_DIR)
     if not disable_alembic_upgrade:
         from dbgpt.storage.metadata.db_manager import db
         from dbgpt.util._db_migration_utils import _ddl_init_and_upgrade

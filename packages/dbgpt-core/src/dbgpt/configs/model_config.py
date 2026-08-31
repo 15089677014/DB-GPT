@@ -5,13 +5,34 @@ import os
 from functools import cache
 from typing import Optional
 
-ROOT_PATH = os.path.dirname(
-    os.path.dirname(
+
+def _detect_root_path() -> str:
+    """Detect the root path of the DB-GPT installation.
+
+    Determines whether running from a source checkout or a pip install,
+    and returns the appropriate root path.
+
+    Returns:
+        str: The repo root directory for source installs, or
+            ``DBGPT_HOME/workspace`` (defaulting to ``~/.dbgpt/workspace``)
+            for pip installs.
+    """
+    candidate = os.path.dirname(
         os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            os.path.dirname(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+            )
         )
     )
-)
+    if os.path.isfile(os.path.join(candidate, "pyproject.toml")):
+        return candidate
+    home = os.environ.get("DBGPT_HOME", os.path.expanduser("~/.dbgpt"))
+    return os.path.join(home, "workspace")
+
+
+ROOT_PATH = _detect_root_path()
 MODEL_PATH = os.path.join(ROOT_PATH, "models")
 PILOT_PATH = os.path.join(ROOT_PATH, "pilot")
 LOGDIR = os.getenv("DBGPT_LOG_DIR", os.path.join(ROOT_PATH, "logs"))
@@ -105,6 +126,7 @@ LLM_MODEL_CONFIG = {
     # https://docs.siliconflow.cn/quickstart
     "siliconflow_proxyllm": "siliconflow_proxyllm",
     "gitee_proxyllm": "gitee_proxyllm",
+    "burncloud_proxyllm": "burncloud_proxyllm",
     "llama-2-7b": os.path.join(MODEL_PATH, "Llama-2-7b-chat-hf"),
     "llama-2-13b": os.path.join(MODEL_PATH, "Llama-2-13b-chat-hf"),
     "llama-2-70b": os.path.join(MODEL_PATH, "Llama-2-70b-chat-hf"),
@@ -352,3 +374,30 @@ KNOWLEDGE_UPLOAD_ROOT_PATH = DATA_DIR
 KNOWLEDGE_CACHE_ROOT_PATH = os.path.join(
     KNOWLEDGE_UPLOAD_ROOT_PATH, "_knowledge_cache_"
 )
+BENCHMARK_DATA_ROOT_PATH = os.path.join(PILOT_PATH, "benchmark_meta_data")
+
+
+def _detect_skills_dir() -> str:
+    """Detect the skills directory path.
+
+    Priority:
+        1. ``DBGPT_SKILLS_DIR`` environment variable (highest)
+        2. ``{ROOT_PATH}/skills`` if it exists (source checkout)
+        3. ``~/.dbgpt/skills`` (pip install mode)
+
+    Returns:
+        str: Absolute path to the skills directory.
+    """
+    env_dir = os.environ.get("DBGPT_SKILLS_DIR")
+    if env_dir:
+        return env_dir
+
+    source_dir = os.path.join(ROOT_PATH, "skills")
+    if os.path.isdir(source_dir):
+        return source_dir
+
+    home = os.environ.get("DBGPT_HOME", os.path.expanduser("~/.dbgpt"))
+    return os.path.join(home, "skills")
+
+
+SKILLS_DIR = _detect_skills_dir()

@@ -1,7 +1,9 @@
 """AIWrapper for LLM."""
 
+import asyncio
 import json
 import logging
+import sys
 import traceback
 from typing import Any, Callable, Dict, Optional, Union
 
@@ -29,6 +31,7 @@ class AIWrapper:
         "conv_id",
         "sender",
         "stream_out",
+        "stream_callback",
     }
 
     def __init__(
@@ -120,7 +123,21 @@ class AIWrapper:
         return json.dumps(config, sort_keys=True, ensure_ascii=False)
 
     async def create(self, verbose: bool = False, **config):
-        """Create llm client request."""
+        """Create llm client request and return the generated text."""
+        response = await self._create_raw(verbose, config)
+        return response.gen_text_with_thinking() if response else None
+
+    async def create_with_output(self, verbose: bool = False, **config):
+        """Like :meth:`create` but return the raw :class:`ModelOutput`.
+
+        Native function calling needs the ``tool_calls`` attached to the model
+        output, which :meth:`create` collapses into plain text. Call this in
+        native mode to retain ``tool_calls``.
+        """
+        return await self._create_raw(verbose, config)
+
+    async def _create_raw(self, verbose: bool, config: Dict) -> Optional["ModelOutput"]:
+        """Run the LLM request and return the raw ModelOutput (or None)."""
         # merge the input config with the i-th config in the config list
         full_config = {**config}
         # separate the config into create_config and extra_kwargs
@@ -136,23 +153,76 @@ class AIWrapper:
         conv_id = extra_kwargs.get("conv_id", None)
         sender = extra_kwargs.get("sender", None)
         stream_out = extra_kwargs.get("stream_out", True)
+        stream_callback = extra_kwargs.get("stream_callback")
 
         try:
             response = await self._completions_create(
-                llm_model, params, conv_id, sender, memory, stream_out, verbose
+                llm_model,
+                params,
+                conv_id,
+                sender,
+                memory,
+                stream_out,
+                verbose,
+                stream_callback,
             )
         except LLMChatError as e:
             logger.debug(f"{llm_model} generate failed!{str(e)}")
             raise e
         else:
             pass_filter = filter_func is None or filter_func(
-                context=context, response=response
+                context=context,
+                response=response.gen_text_with_thinking() if response else None,
             )
             if pass_filter:
                 # Return the response if it passes the filter
                 return response
             else:
                 return None
+
+    async def generate_text(
+        self,
+        prompt: str,
+        llm_model: Optional[str] = None,
+        max_new_tokens: int = 2000,
+        temperature: float = 0.3,
+        conv_id: Optional[str] = None,
+    ) -> str:
+        """Generate text from a single prompt.
+
+        A thin convenience wrapper around :meth:`create` for simple text
+        generation use cases such as context summarization (Layer 3
+        compaction) where a full message list is unnecessary.
+
+        Args:
+            prompt: The user prompt to send to the model.
+            llm_model: Model name. Required — ``AIWrapper`` does not hold a
+                default model, so the caller (e.g. ``ContextManager``) must
+                pass the agent's model name.
+            max_new_tokens: Max tokens to generate.
+            temperature: Sampling temperature.
+            conv_id: Conversation id for tracing.
+
+        Returns:
+            The generated text. On failure returns an empty string (the
+            caller is expected to handle the empty-result case).
+        """
+        if not llm_model:
+            raise ValueError("llm_model is required for generate_text()")
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            response = await self.create(
+                messages=messages,
+                llm_model=llm_model,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                stream_out=False,
+                conv_id=conv_id,
+            )
+        except LLMChatError:
+            logger.exception("generate_text: LLM call failed")
+            return ""
+        return response or ""
 
     def _get_span_metadata(self, payload: Dict) -> Dict:
         metadata = {k: v for k, v in payload.items()}
@@ -177,6 +247,7 @@ class AIWrapper:
         memory: Optional[Any] = None,
         stream_out: bool = True,
         verbose: bool = False,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ):
         payload = {
             "model": llm_model,
@@ -186,6 +257,10 @@ class AIWrapper:
             "max_new_tokens": int(params.get("max_new_tokens")),
             "echo": self.llm_echo,
         }
+        if params.get("tools") is not None:
+            payload["tools"] = params["tools"]
+        if params.get("tool_choice") is not None:
+            payload["tool_choice"] = params["tool_choice"]
         logger.info(f"Request: \n{payload}")
         span = root_tracer.start_span(
             "Agent.llm_client.no_streaming_call",
@@ -199,36 +274,105 @@ class AIWrapper:
             model_request = _build_model_request(payload)
             str_prompt = model_request.messages_to_string()
             model_output: Optional[ModelOutput] = None
-            async for output in self._llm_client.generate_stream(model_request.copy()):  # type: ignore # noqa
+            previous_text = ""
+            previous_thinking_text = ""
+
+            async def _emit_stream_callback(payload: Dict[str, Any]) -> None:
+                if not stream_callback:
+                    return
+                try:
+                    if asyncio.iscoroutinefunction(stream_callback):
+                        await stream_callback(payload)
+                        return
+                    result = stream_callback(payload)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.exception("stream_callback error")
+
+            async for output in self._llm_client.generate_stream(model_request.copy()):
                 model_output = output
+                delta_text = ""
+                delta_thinking = ""
+                if output.has_text:
+                    current_text = output.text or ""
+                    if current_text.startswith(previous_text):
+                        delta_text = current_text[len(previous_text) :]
+                        previous_text = current_text
+                    else:
+                        delta_text = current_text
+                        previous_text = current_text
+                if output.has_thinking:
+                    current_thinking = output.thinking_text or ""
+                    if current_thinking.startswith(previous_thinking_text):
+                        delta_thinking = current_thinking[len(previous_thinking_text) :]
+                        previous_thinking_text = current_thinking
+                    else:
+                        delta_thinking = current_thinking
+                        previous_thinking_text = current_thinking
+                if delta_text or delta_thinking:
+                    await _emit_stream_callback(
+                        {
+                            "delta_text": delta_text,
+                            "delta_thinking": delta_thinking,
+                        }
+                    )
                 if memory and stream_out:
                     from ... import GptsMemory  # noqa: F401
 
-                    temp_message = {
-                        "sender": sender,
-                        "receiver": "?",
-                        "model": llm_model,
-                        "markdown": model_output.gen_text_with_thinking(),
-                    }
-                    await memory.push_message(
-                        conv_id,
-                        temp_message,
-                    )
+                    if model_output:
+                        temp_message = {
+                            "sender": sender,
+                            "receiver": "?",
+                            "model": llm_model,
+                            "markdown": model_output.gen_text_with_thinking(),
+                        }
+                        await memory.push_message(
+                            conv_id,
+                            temp_message,
+                        )
             if not model_output:
                 raise ValueError("LLM generate stream is null!")
             parsed_output = model_output.gen_text_with_thinking()
-            parsed_output = parsed_output.strip().replace("\\n", "\n")
 
             if verbose:
                 print("\n", "-" * 80, flush=True, sep="")
                 print(f"String Prompt[verbose]: \n{str_prompt}")
                 print(f"LLM Output[verbose]: \n{parsed_output}")
                 print("-" * 80, "\n", flush=True, sep="")
-            return parsed_output
+            return model_output
         except Exception as e:
             logger.error(
                 f"Call LLMClient error, {str(e)}, detail: {traceback.format_exc()}"
             )
             raise LLMChatError(original_exception=e) from e
         finally:
-            span.end()
+            # Capture token/cost/latency from the model output into the
+            # observability span so the Overview dashboard shows real data.
+            #
+            # IMPORTANT: start from the span's existing metadata (which carries
+            # `messages` — the system prompt + user input sent to the model) and
+            # merge, NOT replace. `Span.end(metadata=...)` REPLACES the whole
+            # dict, so a bare `{"status": ...}` would drop the prompt/messages.
+            end_meta: Dict[str, Any] = dict(span.metadata)
+            end_meta["status"] = "OK"
+            if model_output is not None:
+                usage = model_output.usage or {}
+                end_meta["model_name"] = llm_model
+                end_meta["prompt_tokens"] = usage.get("prompt_tokens")
+                end_meta["completion_tokens"] = usage.get("completion_tokens")
+                end_meta["total_tokens"] = usage.get("total_tokens")
+                cost = usage.get("cost")
+                if cost is not None:
+                    end_meta["cost"] = cost
+                metrics = model_output.metrics
+                if metrics is not None:
+                    end_meta.setdefault("prompt_tokens", metrics.prompt_tokens)
+                    end_meta.setdefault("completion_tokens", metrics.completion_tokens)
+                    end_meta.setdefault("total_tokens", metrics.total_tokens)
+            # If an exception is in flight, record error status and re-raise path
+            # handles it; here we just mark the span.
+            if sys.exc_info()[1] is not None:
+                end_meta["status"] = "ERROR"
+                end_meta["error"] = str(sys.exc_info()[1])
+            span.end(metadata=end_meta)

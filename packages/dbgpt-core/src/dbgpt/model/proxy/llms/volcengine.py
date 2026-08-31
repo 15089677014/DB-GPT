@@ -42,7 +42,7 @@ class VolcengineDeployModelParameters(OpenAICompatibleDeployModelParameters):
     provider: str = "proxy/volcengine"
 
     api_base: Optional[str] = field(
-        default="${env:ARK_API_BASE:-https://ark.cn-beijing.volces.com/api/v3}",
+        default="${env:ARK_API_BASE:-https://ark.cn-beijing.volces.com/api/coding/v3}",
         metadata={
             "help": _("The base url of the Volcengine API."),
         },
@@ -155,6 +155,14 @@ register_proxy_model_adapter(
             max_output_length=8 * 1024,
             description="DeepSeek-R1 by DeepSeek",
             link="https://api-docs.deepseek.com/news/news250120",
+            function_calling=True,
+        ),
+        ModelMetadata(
+            model="glm-4-7-251222",
+            context_length=128 * 1024,
+            max_output_length=4 * 1024,
+            description="GLM-4-7 by Zhipu AI (via Volcengine ARK)",
+            link="https://www.volcengine.com/docs/82379/1298454",
             function_calling=True,
         ),
     ],

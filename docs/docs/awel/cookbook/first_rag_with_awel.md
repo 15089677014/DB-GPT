@@ -11,7 +11,7 @@ In this example, we will load your knowledge from a URL and store it in a vector
 First, you need to install the `dbgpt` library.
 
 ```bash
-pip install "dbgpt[rag]>=0.5.2"
+pip install "dbgpt[agent,simple_framework, client]>=0.7.1" "dbgpt_ext>=0.7.1" -U
 ````
 
 ### Prepare Embedding Model
@@ -75,18 +75,19 @@ import shutil
 from dbgpt.core.awel import DAG
 from dbgpt_ext.rag import ChunkParameters
 from dbgpt.rag.knowledge import KnowledgeType
-from dbgpt.rag.operators import EmbeddingAssemblerOperator, KnowledgeOperator
-from dbgpt.storage.vector_store.chroma_store import ChromaStore, ChromaVectorConfig
+from dbgpt_ext.rag.operators import EmbeddingAssemblerOperator
+from dbgpt_ext.rag.operators.knowledge import KnowledgeOperator
+from dbgpt_ext.storage.vector_store.chroma_store import ChromaStore, ChromaVectorConfig
 
 # Delete old vector store directory(/tmp/awel_rag_test_vector_store)
 shutil.rmtree("/tmp/awel_rag_test_vector_store", ignore_errors=True)
 
 vector_store = ChromaStore(
     vector_store_config=ChromaVectorConfig(
-        name="test_vstore",
-        persist_path="/tmp/awel_rag_test_vector_store",
-        embedding_fn=embeddings
-    )
+        persist_path="/tmp/awel_rag_test_vector_store"
+    ),
+    name="test_vstore",
+    embedding_fn=embeddings
 )
 
 with DAG("load_knowledge_dag") as knowledge_dag:
@@ -254,10 +255,10 @@ from dbgpt.core.awel import DAG, MapOperator, InputOperator, JoinOperator, Input
 from dbgpt.core.operators import PromptBuilderOperator, RequestBuilderOperator
 from dbgpt_ext.rag import ChunkParameters
 from dbgpt.rag.knowledge import KnowledgeType
-from dbgpt.rag.operators import EmbeddingAssemblerOperator, KnowledgeOperator,
-    EmbeddingRetrieverOperator
+from dbgpt_ext.rag.operators.embedding import EmbeddingAssemblerOperator, EmbeddingRetrieverOperator
+from dbgpt_ext.rag.operators import KnowledgeOperator
 from dbgpt.rag.embedding import DefaultEmbeddingFactory
-from dbgpt.storage.vector_store.chroma_store import ChromaStore, ChromaVectorConfig
+from dbgpt_ext.storage.vector_store.chroma_store import ChromaStore, ChromaVectorConfig
 from dbgpt.model.operators import LLMOperator
 from dbgpt.model.proxy import OpenAILLMClient
 
@@ -273,10 +274,10 @@ shutil.rmtree("/tmp/awel_rag_test_vector_store", ignore_errors=True)
 
 vector_store = ChromaStore(
     vector_store_config=ChromaVectorConfig(
-        name="test_vstore",
         persist_path="/tmp/awel_rag_test_vector_store",
-        embedding_fn=embeddings
     ),
+    name="test_vstore",
+    embedding_fn=embeddings
 )
 
 with DAG("load_knowledge_dag") as knowledge_dag:
@@ -352,3 +353,9 @@ And the graph of the `rag_dag` is:
   <img src={'/img/awel/cookbook/first_rag_rag_dag.png'} width="1000px"/>
 </p>
 
+
+## See also
+
+- [Knowledge Base Indexing Principles](/docs/design/kb_index_principles) — how a document becomes searchable (structural / knowledge-graph incl. code graph / vector / keyword indexes)
+- [Agentic RAG Conversation Principles](/docs/design/agentic_rag_principles) — how a question becomes a cited answer via the agentic retrieval loop
+- [RAG module reference](/docs/modules/rag)

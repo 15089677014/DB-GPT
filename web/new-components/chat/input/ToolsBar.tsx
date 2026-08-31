@@ -231,7 +231,7 @@ const ToolsBar: React.FC<{
   return (
     <div className='flex flex-col  mb-2'>
       <div className='flex items-center justify-between h-full w-full'>
-        <div className='flex gap-3 text-lg'>
+        <div className='flex gap-3 text-lg items-center'>
           <ModelSwitcher />
           <Resource fileList={fileList} setFileList={setFileList} setLoading={setLoading} fileName={fileName} />
           <Temperature temperatureValue={temperatureValue} setTemperatureValue={setTemperatureValue} />

@@ -1,113 +1,126 @@
 import { ChatContext } from '@/app/chat-context';
-import { DarkSvg, SunnySvg } from '@/components/icons';
-import UserBar from '@/new-components/layout/UserBar';
-import { STORAGE_LANG_KEY, STORAGE_THEME_KEY, STORAGE_USERINFO_KEY } from '@/utils/constants/index';
-import Icon, { GlobalOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
-import { Popover, Tooltip } from 'antd';
-import { ItemType } from 'antd/es/menu/hooks/useItems';
+import { delDialogue, getDialogueList } from '@/client/api/request';
+import { apiInterceptors } from '@/client/api/tools/interceptors';
+import { DarkSvg, ModelSvg, SunnySvg } from '@/components/icons';
+import type { IChatDialogueSchema } from '@/types/chat';
+import { STORAGE_LANG_KEY, STORAGE_THEME_KEY } from '@/utils/constants/index';
+import Icon, {
+  ApartmentOutlined,
+  ApiOutlined,
+  ClockCircleOutlined,
+  DashboardOutlined,
+  DeleteOutlined,
+  GlobalOutlined,
+  LineChartOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  MessageOutlined,
+  PlusOutlined,
+  RightOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
+import { Popover, Skeleton, Tooltip, message } from 'antd';
 import cls from 'classnames';
 import moment from 'moment';
 import 'moment/locale/zh-cn';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-
-type SettingItem = {
-  key: string;
-  name: string;
-  icon: ReactNode;
-  noDropdownItem?: boolean;
-  onClick?: () => void;
-  items?: ItemType[];
-  onSelect?: (p: { key: string }) => void;
-  defaultSelectedKeys?: string[];
-  placement?: 'top' | 'topLeft';
-};
 
 type RouteItem = {
   key: string;
   name: string;
-  icon: ReactNode;
+  iconSrc: string;
+  activeIconSrc?: string;
   path: string;
   isActive?: boolean;
 };
 
-// TODO: unused function
-// function menuItemStyle(active?: boolean) {
-//   return `flex items-center h-12 hover:bg-[#F1F5F9] dark:hover:bg-theme-dark text-base w-full transition-colors whitespace-nowrap px-4 ${
-//     active ? 'bg-[#F1F5F9] dark:bg-theme-dark' : ''
-//   }`;
-// }
-
 function smallMenuItemStyle(active?: boolean) {
-  return `flex items-center justify-center mx-auto rounded w-14 h-14 text-xl hover:bg-[#F1F5F9] dark:hover:bg-theme-dark transition-colors cursor-pointer ${
-    active ? 'bg-[#F1F5F9] dark:bg-theme-dark' : ''
+  return `flex items-center justify-center mx-auto rounded w-14 h-14 text-xl hover:bg-blue-50/50 dark:hover:bg-blue-900/10 transition-colors cursor-pointer ${
+    active ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 shadow-sm' : ''
   }`;
 }
 
+function SidebarPictureIcon({
+  src,
+  activeSrc,
+  active,
+  alt,
+  size = 32,
+}: {
+  src: string;
+  activeSrc?: string;
+  active?: boolean;
+  alt: string;
+  size?: number;
+}) {
+  return <Image src={active && activeSrc ? activeSrc : src} alt={alt} width={size} height={size} />;
+}
+
 function SideBar() {
-  // const { chatId, scene, isMenuExpand, refreshDialogList, setIsMenuExpand, setAgent, mode, setMode, adminList } =
-  //   useContext(ChatContext);
-  const { isMenuExpand, setIsMenuExpand, mode, setMode, adminList } = useContext(ChatContext);
-  const { pathname } = useRouter();
+  const { isMenuExpand, setIsMenuExpand, mode, setMode } = useContext(ChatContext);
+  const router = useRouter();
+  const { pathname } = router;
+  const isSettingsActive =
+    pathname.startsWith('/construct/app') ||
+    pathname.startsWith('/construct/flow') ||
+    pathname.startsWith('/construct/prompt') ||
+    pathname.startsWith('/construct/dbgpts') ||
+    pathname.startsWith('/construct/models') ||
+    pathname.startsWith('/construct/scheduled-tasks') ||
+    pathname === '/models_evaluation' ||
+    pathname.startsWith('/observability');
   const { t, i18n } = useTranslation();
   const [logo, setLogo] = useState<string>('/logo_zh_latest.png');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dialogueList, setDialogueList] = useState<IChatDialogueSchema[]>([]);
+  const [loadingDialogues, setLoadingDialogues] = useState(false);
 
-  const hasAdmin = useMemo(() => {
-    const { user_id } = JSON.parse(localStorage.getItem(STORAGE_USERINFO_KEY) || '{}');
-    return adminList.some(admin => admin.user_id === user_id);
-  }, [adminList]);
+  const fetchDialogueList = useCallback(async () => {
+    setLoadingDialogues(true);
+    try {
+      const [, data] = await apiInterceptors(getDialogueList());
+      if (data && Array.isArray(data)) {
+        setDialogueList(data.filter(item => item.chat_mode === 'chat_react_agent'));
+      }
+    } catch (e) {
+      console.error('Failed to fetch dialogue list', e);
+    } finally {
+      setLoadingDialogues(false);
+    }
+  }, []);
 
-  // TODO: unused function
-  // const routes = useMemo(() => {
-  //   const items: RouteItem[] = [
-  //     {
-  //       key: 'app',
-  //       name: t('App'),
-  //       path: '/app',
-  //       icon: <AppstoreOutlined />,
-  //     },
-  //     {
-  //       key: 'flow',
-  //       name: t('awel_flow'),
-  //       icon: <ForkOutlined />,
-  //       path: '/flow',
-  //     },
-  //     {
-  //       key: 'models',
-  //       name: t('model_manage'),
-  //       path: '/models',
-  //       icon: <Icon component={ModelSvg} />,
-  //     },
-  //     {
-  //       key: 'database',
-  //       name: t('Database'),
-  //       icon: <ConsoleSqlOutlined />,
-  //       path: '/database',
-  //     },
-  //     {
-  //       key: 'knowledge',
-  //       name: t('Knowledge_Space'),
-  //       icon: <PartitionOutlined />,
-  //       path: '/knowledge',
-  //     },
-  //     {
-  //       key: 'agent',
-  //       name: t('Plugins'),
-  //       path: '/agent',
-  //       icon: <BuildOutlined />,
-  //     },
-  //     {
-  //       key: 'prompt',
-  //       name: t('Prompt'),
-  //       icon: <MessageOutlined />,
-  //       path: '/prompt',
-  //     },
-  //   ];
-  //   return items;
-  // }, [t]);
+  const handleDeleteDialogue = useCallback(async (e: React.MouseEvent, convUid: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      const [err] = await apiInterceptors(delDialogue(convUid));
+      if (!err) {
+        setDialogueList(prev => prev.filter(d => d.conv_uid !== convUid));
+        message.success('已删除');
+      }
+    } catch (error) {
+      console.error('Failed to delete dialogue', error);
+    }
+  }, []);
+
+  const formatRelativeTime = useCallback((dateStr?: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffMins < 1) return '刚刚';
+    if (diffMins < 60) return `${diffMins}分钟前`;
+    if (diffHours < 24) return `${diffHours}小时前`;
+    if (diffDays < 7) return `${diffDays}天前`;
+    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+  }, []);
 
   const handleToggleMenu = useCallback(() => {
     setIsMenuExpand(!isMenuExpand);
@@ -126,394 +139,365 @@ function SideBar() {
     if (language === 'en') moment.locale('en');
     localStorage.setItem(STORAGE_LANG_KEY, language);
   }, [i18n]);
-  const settings = useMemo(() => {
-    const items: SettingItem[] = [
-      {
-        key: 'theme',
-        name: t('Theme'),
-        icon: mode === 'dark' ? <Icon component={DarkSvg} /> : <Icon component={SunnySvg} />,
-        items: [
-          {
-            key: 'light',
-            label: (
-              <div className='py-1 flex justify-between gap-8 '>
-                <span className='flex gap-2 items-center'>
-                  <Image src='/pictures/theme_light.png' alt='english' width={38} height={32}></Image>
-                  <span>Light</span>
-                </span>
-                <span
-                  className={cls({
-                    block: mode === 'light',
-                    hidden: mode !== 'light',
-                  })}
-                >
-                  ✓
-                </span>
-              </div>
-            ),
-          },
-          {
-            key: 'dark',
-            label: (
-              <div className='py-1 flex justify-between gap-8 '>
-                <span className='flex gap-2 items-center'>
-                  <Image src='/pictures/theme_dark.png' alt='english' width={38} height={32}></Image>
-                  <span>Dark</span>
-                </span>
-                <span
-                  className={cls({
-                    block: mode === 'dark',
-                    hidden: mode !== 'dark',
-                  })}
-                >
-                  ✓
-                </span>
-              </div>
-            ),
-          },
-        ],
-        onClick: handleToggleTheme,
-        onSelect: ({ key }: { key: string }) => {
-          if (mode === key) return;
-          setMode(key as 'light' | 'dark');
-          localStorage.setItem(STORAGE_THEME_KEY, key);
-        },
-        defaultSelectedKeys: [mode],
-        placement: 'topLeft',
-      },
-      {
-        key: 'language',
-        name: t('language'),
-        icon: <GlobalOutlined />,
-        items: [
-          {
-            key: 'en',
-            label: (
-              <div className='py-1 flex justify-between gap-8 '>
-                <span className='flex gap-2'>
-                  <Image src='/icons/english.png' alt='english' width={21} height={21}></Image>
-                  <span>English</span>
-                </span>
-                <span
-                  className={cls({
-                    block: i18n.language === 'en',
-                    hidden: i18n.language !== 'en',
-                  })}
-                >
-                  ✓
-                </span>
-              </div>
-            ),
-          },
-          {
-            key: 'zh',
-            label: (
-              <div className='py-1 flex justify-between gap-8 '>
-                <span className='flex gap-2'>
-                  <Image src='/icons/zh.png' alt='english' width={21} height={21}></Image>
-                  <span>简体中文</span>
-                </span>
-                <span
-                  className={cls({
-                    block: i18n.language === 'zh',
-                    hidden: i18n.language !== 'zh',
-                  })}
-                >
-                  ✓
-                </span>
-              </div>
-            ),
-          },
-        ],
-        onSelect: ({ key }: { key: string }) => {
-          if (i18n.language === key) return;
-          i18n.changeLanguage(key);
-          if (key === 'zh') moment.locale('zh-cn');
-          if (key === 'en') moment.locale('en');
-          localStorage.setItem(STORAGE_LANG_KEY, key);
-        },
-        onClick: handleChangeLang,
-        defaultSelectedKeys: [i18n.language],
-      },
-      {
-        key: 'fold',
-        name: t(isMenuExpand ? 'Close_Sidebar' : 'Show_Sidebar'),
-        icon: isMenuExpand ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />,
-        onClick: handleToggleMenu,
-        noDropdownItem: true,
-      },
-    ];
-    return items;
-  }, [t, mode, handleToggleTheme, i18n, handleChangeLang, isMenuExpand, handleToggleMenu, setMode]);
 
   const functions = useMemo(() => {
     const items: RouteItem[] = [
       {
-        key: 'chat',
-        name: t('chat_online'),
-        icon: (
-          <Image
-            key='image_chat'
-            src={pathname === '/chat' ? '/pictures/chat_active.png' : '/pictures/chat.png'}
-            alt='chat_image'
-            width={40}
-            height={40}
-          />
-        ),
-        path: '/chat',
-        isActive: pathname.startsWith('/chat'),
-      },
-      {
         key: 'explore',
         name: t('explore'),
         isActive: pathname === '/',
-        icon: (
-          <Image
-            key='image_explore'
-            src={pathname === '/' ? '/pictures/explore_active.png' : '/pictures/explore.png'}
-            alt='construct_image'
-            width={40}
-            height={40}
-          />
-        ),
+        iconSrc: '/pictures/explore.png',
+        activeIconSrc: '/pictures/explore_active.png',
         path: '/',
       },
       {
-        key: 'construct',
-        name: t('construct'),
-        isActive: pathname.startsWith('/construct'),
-        icon: (
-          <Image
-            key='image_construct'
-            src={pathname.startsWith('/construct') ? '/pictures/app_active.png' : '/pictures/app.png'}
-            alt='construct_image'
-            width={40}
-            height={40}
-          />
-        ),
-        path: '/construct/app',
+        key: 'skills',
+        name: t('skills'),
+        isActive: pathname.startsWith('/construct/skills'),
+        iconSrc: '/pictures/skills.svg',
+        activeIconSrc: '/pictures/skills_active.svg',
+        path: '/construct/skills',
+      },
+      {
+        key: 'datasources',
+        name: t('datasources'),
+        isActive: pathname.startsWith('/construct/database'),
+        iconSrc: '/pictures/datasource.svg',
+        activeIconSrc: '/pictures/datasource_active.svg',
+        path: '/construct/database',
+      },
+      {
+        key: 'knowledge',
+        name: t('knowledge'),
+        isActive: pathname.startsWith('/construct/knowledge'),
+        iconSrc: '/pictures/knowledge_sidebar.svg',
+        activeIconSrc: '/pictures/knowledge_sidebar_active.svg',
+        path: '/construct/knowledge',
       },
     ];
-    if (hasAdmin) {
-      items.push({
-        key: 'evaluation',
-        name: '场景评测',
-        icon: (
-          <Image
-            key='image_construct'
-            src={pathname.startsWith('/evaluation') ? '/pictures/app_active.png' : '/pictures/app.png'}
-            alt='construct_image'
-            width={40}
-            height={40}
-          />
-        ),
-        path: '/evaluation',
-        isActive: pathname === '/evaluation',
-      });
-    }
     return items;
-  }, [t, pathname, hasAdmin]);
+  }, [t, pathname]);
 
-  // TODO: unused function
-  // const dropDownRoutes: ItemType[] = useMemo(() => {
-  //   return routes.map<ItemType>(item => ({
-  //     key: item.key,
-  //     label: (
-  //       <Link href={item.path} className='text-base'>
-  //         {item.icon}
-  //         <span className='ml-2 text-sm'>{item.name}</span>
-  //       </Link>
-  //     ),
-  //   }));
-  // }, [routes]);
-
-  // TODO: unused function
-  // const dropDownSettings: ItemType[] = useMemo(() => {
-  //   return settings
-  //     .filter(item => !item.noDropdownItem)
-  //     .map<ItemType>(item => ({
-  //       key: item.key,
-  //       label: (
-  //         <div className='text-base' onClick={item.onClick}>
-  //           {item.icon}
-  //           <span className='ml-2 text-sm'>{item.name}</span>
-  //         </div>
-  //       ),
-  //     }));
-  // }, [settings]);
-
-  // TODO: unused function
-  // const dropDownFunctions: ItemType[] = useMemo(() => {
-  //   return functions.map<ItemType>(item => ({
-  //     key: item.key,
-  //     label: (
-  //       <Link href={item.path} className='text-base'>
-  //         {item.icon}
-  //         <span className='ml-2 text-sm'>{item.name}</span>
-  //       </Link>
-  //     ),
-  //   }));
-  // }, [functions]);
-
-  // TODO: unused function
-  // const handleDelChat = useCallback(
-  //   (dialogue: IChatDialogueSchema) => {
-  //     Modal.confirm({
-  //       title: 'Delete Chat',
-  //       content: 'Are you sure delete this chat?',
-  //       width: '276px',
-  //       centered: true,
-  //       onOk() {
-  //         return new Promise<void>(async (resolve, reject) => {
-  //           try {
-  //             const [err] = await apiInterceptors(delDialogue(dialogue.conv_uid));
-  //             if (err) {
-  //               reject();
-  //               return;
-  //             }
-  //             message.success('success');
-  //             refreshDialogList();
-  //             dialogue.chat_mode === scene && dialogue.conv_uid === chatId && replace('/');
-  //             resolve();
-  //           } catch (e) {
-  //             reject();
-  //           }
-  //         });
-  //       },
-  //     });
-  //   },
-  //   [chatId, refreshDialogList, replace, scene],
-  // );
-
-  // TODO: unused function
-  // const handleClickChatItem = (item: IChatDialogueSchema) => {
-  //   if (item.chat_mode === 'chat_agent' && item.select_param) {
-  //     setAgent?.(item.select_param);
-  //   }
-  // };
-
-  // TODO: unused function
-  // const copyLink = useCallback((item: IChatDialogueSchema) => {
-  //   const success = copy(`${location.origin}/chat?scene=${item.chat_mode}&id=${item.conv_uid}`);
-  //   message[success ? 'success' : 'error'](success ? 'Copy success' : 'Copy failed');
-  // }, []);
-
-  // useEffect(() => {
-  //   queryDialogueList();
-  // }, [queryDialogueList]);
+  const settingsContent = (
+    <div className='w-56 py-1'>
+      <div className='px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider'>{t('management')}</div>
+      <div
+        onClick={() => {
+          router.push('/construct/models');
+          setSettingsOpen(false);
+        }}
+        className={cls(
+          'flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors',
+          {
+            'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400': pathname.startsWith('/construct/models'),
+          },
+        )}
+      >
+        <Icon component={ModelSvg} className='text-cyan-500' />
+        <span>{t('model_manage')}</span>
+      </div>
+      <div
+        onClick={() => {
+          router.push('/construct/flow');
+          setSettingsOpen(false);
+        }}
+        className={cls(
+          'flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors',
+          {
+            'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400': pathname.startsWith('/construct/flow'),
+          },
+        )}
+      >
+        <ApartmentOutlined className='text-green-500' />
+        <span>{t('awel_workflow')}</span>
+      </div>
+      <div
+        onClick={() => {
+          router.push('/construct/connectors');
+          setSettingsOpen(false);
+        }}
+        className={cls(
+          'flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors',
+          {
+            'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400':
+              pathname.startsWith('/construct/connectors'),
+          },
+        )}
+      >
+        <ApiOutlined className='text-violet-500' />
+        <span>{t('connectors')}</span>
+      </div>
+      <div
+        onClick={() => {
+          router.push('/construct/scheduled-tasks');
+          setSettingsOpen(false);
+        }}
+        className={cls(
+          'flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors',
+          {
+            'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400':
+              pathname.startsWith('/construct/scheduled-tasks'),
+          },
+        )}
+      >
+        <ClockCircleOutlined className='text-teal-500' />
+        <span>{t('scheduled_tasks')}</span>
+      </div>
+      <div
+        onClick={() => {
+          router.push('/models_evaluation');
+          setSettingsOpen(false);
+        }}
+        className={cls(
+          'flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors',
+          {
+            'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400': pathname === '/models_evaluation',
+          },
+        )}
+      >
+        <LineChartOutlined className='text-red-500' />
+        <span>{t('models_evaluation')}</span>
+      </div>
+      <div
+        onClick={() => {
+          router.push('/observability');
+          setSettingsOpen(false);
+        }}
+        className={cls(
+          'flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer transition-colors',
+          {
+            'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400': pathname.startsWith('/observability'),
+          },
+        )}
+      >
+        <DashboardOutlined className='text-indigo-500' />
+        <span>{t('observability')}</span>
+      </div>
+    </div>
+  );
 
   useEffect(() => {
     const language = i18n.language;
     if (language === 'zh') moment.locale('zh-cn');
     if (language === 'en') moment.locale('en');
-  }, []);
+  }, [i18n.language]);
 
   useEffect(() => {
     setLogo(mode === 'dark' ? '/logo_s_latest.png' : '/logo_zh_latest.png');
   }, [mode]);
 
+  useEffect(() => {
+    fetchDialogueList();
+  }, [fetchDialogueList]);
+
+  // ============ COLLAPSED SIDEBAR ============
   if (!isMenuExpand) {
     return (
-      <div
-        className='flex flex-col justify-between pt-4 h-screen bg-bar dark:bg-[#232734] animate-fade animate-duration-300'
-        // onMouseEnter={() => {
-        // setIsMenuExpand(true);
-        // }}
-      >
+      <div className='flex flex-col justify-between pt-4 h-screen bg-bar dark:bg-[#232734] animate-fade animate-duration-300'>
         <div>
-          <Link href='/' className='flex justify-center items-center pb-4'>
-            <Image src={isMenuExpand ? logo : '/LOGO_SMALL.png'} alt='DB-GPT' width={40} height={40} />
-          </Link>
+          <div className='flex flex-col items-center pb-2'>
+            <Link href='/' className='flex justify-center items-center pb-2'>
+              <Image src='/LOGO_SMALL.png' alt='DB-GPT' width={40} height={40} />
+            </Link>
+            <Tooltip title={t('Show_Sidebar') || '展开侧栏'} placement='right'>
+              <div
+                onClick={handleToggleMenu}
+                className='flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:hover:bg-gray-700 dark:hover:text-gray-300 cursor-pointer transition-colors'
+              >
+                <MenuUnfoldOutlined style={{ fontSize: 14 }} />
+              </div>
+            </Tooltip>
+          </div>
           <div className='flex flex-col gap-4 items-center'>
-            {functions.map(i => (
-              <Link key={i.key} className='h-12 flex items-center' href={i.path}>
-                {i?.icon}
+            {functions.map(item => (
+              <Link key={item.key} className='h-12 flex items-center' href={item.path}>
+                <Tooltip title={item.name} placement='right'>
+                  <div className={smallMenuItemStyle(item.isActive)}>
+                    <SidebarPictureIcon
+                      src={item.iconSrc}
+                      activeSrc={item.activeIconSrc}
+                      active={item.isActive}
+                      alt={`${item.key}_icon`}
+                    />
+                  </div>
+                </Tooltip>
               </Link>
             ))}
           </div>
         </div>
         <div className='py-4'>
-          <UserBar onlyAvatar />
-          {settings
-            .filter(item => item.noDropdownItem)
-            .map(item => (
-              <Tooltip key={item.key} title={item.name} placement='right'>
-                <div className={smallMenuItemStyle()} onClick={item.onClick}>
-                  {item.icon}
-                </div>
-              </Tooltip>
-            ))}
+          {/* Settings */}
+          <Popover
+            content={settingsContent}
+            trigger='click'
+            placement='rightTop'
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            arrow={false}
+            overlayInnerStyle={{ padding: 0, borderRadius: 12, overflow: 'hidden' }}
+          >
+            <Tooltip title={t('Setting')} placement='right'>
+              <div className={cls(smallMenuItemStyle(isSettingsActive), 'mb-2')}>
+                <SettingOutlined />
+              </div>
+            </Tooltip>
+          </Popover>
+          <Tooltip title={t(isMenuExpand ? 'Close_Sidebar' : 'Show_Sidebar')} placement='right'>
+            <div className={smallMenuItemStyle()} onClick={handleToggleMenu}>
+              <MenuUnfoldOutlined />
+            </div>
+          </Tooltip>
         </div>
       </div>
     );
   }
 
+  // ============ EXPANDED SIDEBAR ============
   return (
-    <div
-      className='flex flex-col justify-between h-screen px-4 pt-4 bg-bar dark:bg-[#232734] animate-fade animate-duration-300'
-      // onMouseLeave={() => {
-      //   setIsMenuExpand(false);
-      // }}
-    >
-      <div>
-        {/* LOGO */}
-        <Link href='/' className='flex items-center justify-center p-2 pb-4'>
-          <Image src={isMenuExpand ? logo : '/LOGO_SMALL.png'} alt='DB-GPT' width={180} height={40} />
+    <div className='flex flex-col h-screen w-[240px] min-w-[240px] px-4 pt-4 bg-bar dark:bg-[#232734] animate-fade animate-duration-300'>
+      {/* LOGO + Collapse Toggle */}
+      <div className='flex items-center justify-between p-2 pb-4'>
+        <Link href='/' className='flex items-center'>
+          <Image src={logo} alt='DB-GPT' width={140} height={32} />
         </Link>
-        {/* functions */}
-        <div className='flex flex-col gap-4'>
-          {functions.map(item => {
-            return (
-              <Link
-                href={item.path}
-                className={cls(
-                  'flex items-center w-full h-12 px-4 cursor-pointer hover:bg-[#F1F5F9] dark:hover:bg-theme-dark hover:rounded-xl',
-                  {
-                    'bg-white rounded-xl dark:bg-black': item.isActive,
-                  },
-                )}
-                key={item.key}
-              >
-                <div className='mr-3'>{item.icon}</div>
-                <span className='text-sm'>{t(item.name as any)}</span>
-              </Link>
-            );
-          })}
-        </div>
+        <Tooltip title={t('Close_Sidebar') || '收起侧栏'}>
+          <div
+            onClick={handleToggleMenu}
+            className='flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-200 dark:hover:bg-gray-700 dark:hover:text-gray-300 cursor-pointer transition-colors'
+          >
+            <MenuFoldOutlined style={{ fontSize: 14 }} />
+          </div>
+        </Tooltip>
       </div>
 
-      {/* Settings */}
-      <div className='pt-4'>
-        <span className={cls('flex items-center w-full h-12 px-4 bg-[#F1F5F9] dark:bg-theme-dark rounded-xl')}>
-          <div className='mr-3 w-full'>
-            <UserBar />
-          </div>
-        </span>
-        <div className='flex items-center justify-around py-4 mt-2 border-t border-dashed border-gray-200 dark:border-gray-700'>
-          {settings.map(item => (
-            <div key={item.key}>
-              <Popover content={item.name}>
-                <div className='flex-1 flex items-center justify-center cursor-pointer text-xl' onClick={item.onClick}>
-                  {item.icon}
-                </div>
-              </Popover>
-              {/* {item.items ? (
-                <Dropdown
-                  menu={{ items: item.items, selectable: true, onSelect: item.onSelect, defaultSelectedKeys: item.defaultSelectedKeys }}
-                  placement={item.placement || 'top'}
-                  arrow
-                >
-                  <span onClick={item.onClick}>{item.icon}</span>
-                </Dropdown>
-              ) : (
-                <Popover content={item.name}>
-                  <div className="flex-1 flex items-center justify-center cursor-pointer text-xl" onClick={item.onClick}>
-                    {item.icon}
-                  </div>
-                </Popover>
-              )} */}
+      {/* New Task Button */}
+      <Link href='/'>
+        <div className='flex items-center justify-center gap-2 px-4 py-2.5 mb-4 bg-black dark:bg-white dark:text-black text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer'>
+          <PlusOutlined className='text-xs' />
+          <span>{t('new_task')}</span>
+        </div>
+      </Link>
+
+      {/* Functions */}
+      <div className='flex flex-col gap-1'>
+        {functions.map(item => (
+          <Link
+            href={item.path}
+            className={cls(
+              'flex items-center w-full h-12 px-4 cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-900/10 hover:rounded-xl',
+              {
+                'bg-blue-50 rounded-xl text-blue-600 dark:bg-blue-900/20 dark:text-blue-400': item.isActive,
+              },
+            )}
+            key={item.key}
+          >
+            <div className='mr-3'>
+              <SidebarPictureIcon
+                src={item.iconSrc}
+                activeSrc={item.activeIconSrc}
+                active={item.isActive}
+                alt={`${item.key}_icon`}
+              />
             </div>
-          ))}
+            <span className='text-sm'>{item.name}</span>
+          </Link>
+        ))}
+      </div>
+
+      {/* All Tasks Section */}
+      <div className='mt-4 mb-2 px-1'>
+        <div className='flex items-center justify-between'>
+          <span className='text-xs font-semibold text-gray-400 uppercase tracking-wider'>{t('all_tasks')}</span>
+          <Link href='/conversations' className='inline-flex items-center'>
+            <Tooltip title={t('view_all')}>
+              <RightOutlined className='text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors text-xs leading-none' />
+            </Tooltip>
+          </Link>
+        </div>
+      </div>
+      <div className='flex-1 overflow-y-auto min-h-0'>
+        {loadingDialogues ? (
+          <div className='px-2 pt-2'>
+            <Skeleton active title={false} paragraph={{ rows: 4, width: '100%' }} />
+          </div>
+        ) : dialogueList.length > 0 ? (
+          <div className='space-y-0.5'>
+            {dialogueList.map(conv => (
+              <Link
+                key={conv.conv_uid}
+                href={`/?id=${conv.conv_uid}`}
+                className='flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer text-sm transition-colors group hover:bg-[#F1F5F9] dark:hover:bg-theme-dark'
+              >
+                <MessageOutlined className='text-gray-400 flex-shrink-0 text-xs mt-1' />
+                <div className='flex-1 min-w-0'>
+                  <div className='font-medium truncate leading-5 text-gray-700 dark:text-gray-300'>
+                    {typeof conv.user_input === 'string'
+                      ? conv.user_input.slice(0, 40) || 'New Conversation'
+                      : 'New Conversation'}
+                  </div>
+                  {conv.gmt_created && (
+                    <div className='text-[11px] text-gray-400 mt-0.5'>{formatRelativeTime(conv.gmt_created)}</div>
+                  )}
+                </div>
+                <Tooltip title='删除'>
+                  <DeleteOutlined
+                    onClick={e => handleDeleteDialogue(e, conv.conv_uid)}
+                    className='text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1'
+                  />
+                </Tooltip>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className='px-3 py-8 text-center'>
+            <div className='text-gray-300 dark:text-gray-600 mb-2'>
+              <MessageOutlined style={{ fontSize: 24 }} />
+            </div>
+            <p className='text-xs text-gray-400'>{t('no_tasks')}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom: Settings + toggles */}
+      <div className='pt-4 pb-2'>
+        {/* Settings */}
+        <Popover
+          content={settingsContent}
+          trigger='click'
+          placement='rightTop'
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          arrow={false}
+          overlayInnerStyle={{ padding: 0, borderRadius: 12, overflow: 'hidden' }}
+        >
+          <div
+            className={cls(
+              'flex items-center w-full h-12 px-4 mb-2 cursor-pointer hover:bg-blue-50/50 dark:hover:bg-blue-900/10 hover:rounded-xl',
+              { 'bg-blue-50 rounded-xl text-blue-600 dark:bg-blue-900/20 dark:text-blue-400': isSettingsActive },
+            )}
+          >
+            <div className='mr-3 w-8 flex justify-center'>
+              <SettingOutlined className='text-xl' />
+            </div>
+            <span className='text-sm'>{t('Setting')}</span>
+          </div>
+        </Popover>
+        <div className='flex items-center justify-around py-4 mt-2 border-t border-dashed border-gray-200 dark:border-gray-700'>
+          <Popover content={mode === 'dark' ? 'Light' : 'Dark'}>
+            <div className='flex-1 flex items-center justify-center cursor-pointer text-xl' onClick={handleToggleTheme}>
+              {mode === 'dark' ? <Icon component={DarkSvg} /> : <Icon component={SunnySvg} />}
+            </div>
+          </Popover>
+          <Popover content={t('language')}>
+            <div className='flex-1 flex items-center justify-center cursor-pointer text-xl' onClick={handleChangeLang}>
+              <GlobalOutlined />
+            </div>
+          </Popover>
+          <Popover content={t(isMenuExpand ? 'Close_Sidebar' : 'Show_Sidebar')}>
+            <div className='flex-1 flex items-center justify-center cursor-pointer text-xl' onClick={handleToggleMenu}>
+              {isMenuExpand ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+            </div>
+          </Popover>
         </div>
       </div>
     </div>

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_space`
     `desc`         varchar(500) NOT NULL COMMENT 'description',
     `owner`        varchar(100) DEFAULT NULL COMMENT 'owner',
     `context`      TEXT         DEFAULT NULL COMMENT 'context argument',
+    `index_methods` varchar(500) DEFAULT NULL COMMENT 'JSON string of index methods',
     `gmt_created`  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP COMMENT 'created time',
     `gmt_modified` TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'update time',
     PRIMARY KEY (`id`),
@@ -255,7 +256,7 @@ CREATE TABLE `gpts_messages` (
   `is_success` int(4)  NULL DEFAULT 0 COMMENT 'agent message is success',
   `app_code` varchar(255) NOT NULL COMMENT 'Current AI assistant code',
   `app_name` varchar(255) NOT NULL COMMENT 'Current AI assistant name',
-  `content` text COMMENT 'Content of the speech',
+  `content` longtext COMMENT 'Content of the speech',
   `current_goal` text COMMENT 'The target corresponding to the current message',
   `context` text COMMENT 'Current conversation context',
   `review_info` text COMMENT 'Current conversation review info',
@@ -526,7 +527,210 @@ CREATE TABLE `dbgpt_serve_dbgpts_hub` (
   UNIQUE KEY `name` (`name`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- dbgpt.evaluate_manage definition
+CREATE TABLE `evaluate_manage` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'autoincrement id',
+  `evaluate_code` varchar(256) NOT NULL COMMENT 'evaluate unique code',
+  `scene_key` varchar(100)  DEFAULT NULL COMMENT 'scene key',
+  `scene_value` varchar(256) DEFAULT NULL COMMENT 'scene value',
+  `context` text DEFAULT NULL COMMENT 'context',
+  `evaluate_metrics` varchar(599) DEFAULT NULL COMMENT 'evaluate metrics',
+  `datasets_name` varchar(256) DEFAULT NULL COMMENT 'datasets name',
+  `datasets` text DEFAULT NULL COMMENT 'datasets content',
+  `storage_type` varchar(256) DEFAULT NULL COMMENT 'result storage type',
+  `parallel_num` int DEFAULT NULL COMMENT 'execute parallel thread number',
+  `state` VARCHAR(100) DEFAULT NULL COMMENT 'execute state',
+  `result` text DEFAULT NULL COMMENT 'evaluate result',
+  `log_info` text DEFAULT NULL COMMENT 'evaluate error log',
+  `average_score` text DEFAULT NULL COMMENT 'metrics average score',
+  `user_id` varchar(100) DEFAULT NULL COMMENT 'user id',
+  `user_name` varchar(128) DEFAULT NULL COMMENT 'user name',
+  `sys_code` varchar(128) DEFAULT NULL COMMENT 'system code',
+  `gmt_create` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'benchmark create time',
+  `gmt_modified` TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'benchmark finish time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_evaluate` (`evaluate_code`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- dbgpt.benchmark_summary definition
+CREATE TABLE `benchmark_summary` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'autoincrement id',
+  `round_id` int NOT NULL COMMENT 'task round id',
+  `output_path` varchar(512)  NULL COMMENT 'output file path',
+  `right` int DEFAULT NULL COMMENT 'right number',
+  `wrong` int DEFAULT NULL COMMENT 'wrong number',
+  `failed` int DEFAULT NULL COMMENT 'failed number',
+  `exception` int DEFAULT NULL COMMENT 'exception number',
+  `llm_code` varchar(256) DEFAULT NULL COMMENT 'benchmark llm code',
+  `evaluate_code` varchar(256) DEFAULT NULL COMMENT 'benchmark evaluate code',
+  `gmt_created` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'benchmark create time',
+  `gmt_modified` TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'benchmark finish time',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- share_links, Store conversation share link tokens
+CREATE TABLE `share_links` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `token` varchar(64) NOT NULL COMMENT 'Unique random share token',
+  `conv_uid` varchar(255) NOT NULL COMMENT 'The conversation uid being shared',
+  `created_by` varchar(255) DEFAULT NULL COMMENT 'User who created the share link',
+  `gmt_created` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_share_token` (`token`),
+  KEY `ix_share_links_token` (`token`),
+  KEY `ix_share_links_conv_uid` (`conv_uid`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Conversation share link table';
+
+
+-- connector_instance, Persist MCP connector instances (encrypted credentials, transport/extra config, lifecycle status)
+CREATE TABLE IF NOT EXISTS `connector_instance` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `connector_id` varchar(64) NOT NULL COMMENT 'Connector UUID',
+  `connector_type` varchar(64) NOT NULL COMMENT 'Connector type, e.g. yuque, feishu, custom_mcp',
+  `display_name` varchar(256) DEFAULT NULL COMMENT 'Display name',
+  `encrypted_credentials` text COMMENT 'Encrypted credentials JSON',
+  `encryption_salt` varchar(256) DEFAULT NULL COMMENT 'Encryption salt',
+  `status` varchar(32) DEFAULT NULL COMMENT 'Status: active / error / disconnected / needs_reactivation',
+  `config_json` text COMMENT 'Extra config JSON (server_uri, transport, description, auth_type, header_name, ...)',
+  `user_name` varchar(128) DEFAULT NULL COMMENT 'User name',
+  `sys_code` varchar(128) DEFAULT NULL COMMENT 'System code',
+  `gmt_created` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+  `gmt_modified` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Record update time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_connector_instance_connector_id` (`connector_id`),
+  KEY `ix_connector_instance_user_name` (`user_name`),
+  KEY `ix_connector_instance_sys_code` (`sys_code`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP connector instance table';
+
+-- dbgpt_serve_scheduled_task, Scheduled task definition table (chat replay type)
+CREATE TABLE IF NOT EXISTS `dbgpt_serve_scheduled_task` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `task_id` varchar(64) NOT NULL COMMENT 'Task UUID',
+  `task_name` varchar(256) NOT NULL COMMENT 'Task name',
+  `description` text DEFAULT NULL COMMENT 'Task description',
+  `task_type` varchar(32) NOT NULL DEFAULT 'chat_replay' COMMENT 'Task type, e.g. chat_replay',
+  `cron_expression` varchar(128) NOT NULL COMMENT 'Cron expression for scheduling',
+  `payload_json` text NOT NULL COMMENT 'Frozen conversation snapshot JSON',
+  `enabled` tinyint(1) NOT NULL DEFAULT 1 COMMENT 'Whether the task is enabled, 1: enabled, 0: disabled',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Record update time',
+  `user_name` varchar(128) DEFAULT NULL COMMENT 'User name',
+  `sys_code` varchar(128) DEFAULT NULL COMMENT 'System code',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scheduled_task_task_id` (`task_id`),
+  KEY `ix_scheduled_task_task_type` (`task_type`),
+  KEY `ix_scheduled_task_user_name` (`user_name`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Scheduled task definition table';
+
+-- dbgpt_serve_scheduled_run, Scheduled task execution history (run records for each task trigger)
+CREATE TABLE IF NOT EXISTS `dbgpt_serve_scheduled_run` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `run_id` varchar(64) NOT NULL COMMENT 'Run UUID',
+  `task_id` varchar(64) NOT NULL COMMENT 'Associated task UUID',
+  `started_at` datetime NOT NULL COMMENT 'Run start time',
+  `finished_at` datetime DEFAULT NULL COMMENT 'Run finish time',
+  `status` varchar(32) NOT NULL COMMENT 'Run status: running / success / failed / timeout',
+  `result_summary` text DEFAULT NULL COMMENT 'Result summary',
+  `error_message` text DEFAULT NULL COMMENT 'Error message if failed',
+  `output_conv_uid` varchar(64) DEFAULT NULL COMMENT 'Output conversation UID generated by this run',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scheduled_run_run_id` (`run_id`),
+  KEY `ix_scheduled_run_task_id` (`task_id`),
+  KEY `ix_scheduled_run_started_at` (`started_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Scheduled task execution history table';
+
+-- dbgpt_session_file, Private persistence for owner-bound session and task files
+CREATE TABLE IF NOT EXISTS `dbgpt_session_file` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `file_id` varchar(64) NOT NULL COMMENT 'Public file ID',
+  `owner_id` varchar(255) NOT NULL COMMENT 'Owning user ID',
+  `session_id` varchar(255) DEFAULT NULL COMMENT 'Interactive session ID',
+  `task_id` varchar(64) DEFAULT NULL COMMENT 'Scheduled task ID',
+  `display_name` varchar(256) NOT NULL COMMENT 'Display file name',
+  `storage_uri` varchar(512) NOT NULL COMMENT 'Private managed storage URI',
+  `media_type` varchar(255) NOT NULL COMMENT 'Detected media type',
+  `file_kind` varchar(32) NOT NULL COMMENT 'File kind',
+  `size_bytes` bigint NOT NULL COMMENT 'File size in bytes',
+  `sha256` varchar(64) NOT NULL COMMENT 'File content SHA-256',
+  `ordinal` int NOT NULL COMMENT 'Stable order within the scope',
+  `status` varchar(32) NOT NULL COMMENT 'File lifecycle status',
+  `inspection_json` longtext DEFAULT NULL COMMENT 'Private inspection metadata JSON',
+  `error_code` varchar(64) DEFAULT NULL COMMENT 'Private processing error code',
+  `error_message` text DEFAULT NULL COMMENT 'Private processing error message',
+  `source_file_id` varchar(64) DEFAULT NULL COMMENT 'Source file ID for task lineage',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Record update time',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `ck_session_file_scope` CHECK ((`session_id` IS NULL) <> (`task_id` IS NULL)),
+  UNIQUE KEY `uk_session_file_file_id` (`file_id`),
+  KEY `idx_session_file_owner_session` (`owner_id`,`session_id`,`ordinal`),
+  KEY `idx_session_file_owner_task` (`owner_id`,`task_id`,`ordinal`),
+  KEY `idx_session_file_sha256` (`owner_id`,`sha256`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Session file metadata table';
+
+-- code_graph_vertex, AST-extracted code nodes (classes, functions, modules, etc.)
+CREATE TABLE IF NOT EXISTS `code_graph_vertex` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `knowledge_id` varchar(100) NOT NULL COMMENT 'Knowledge space ID',
+  `vid` varchar(500) NOT NULL COMMENT 'Vertex unique ID within the knowledge space',
+  `name` varchar(500) NOT NULL COMMENT 'Node name',
+  `node_type` varchar(50) NOT NULL DEFAULT '' COMMENT 'Node type (class, function, module, etc.)',
+  `source_file` varchar(500) DEFAULT '' COMMENT 'Source file path',
+  `language` varchar(30) DEFAULT '' COMMENT 'Programming language',
+  `community` varchar(50) DEFAULT '' COMMENT 'Community ID',
+  `props` text DEFAULT NULL COMMENT 'Additional properties JSON',
+  `gmt_create` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+  `gmt_modified` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Record update time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_cgv_knowledge_vid` (`knowledge_id`,`vid`),
+  KEY `idx_cgv_knowledge_id` (`knowledge_id`),
+  KEY `idx_cgv_name` (`name`),
+  KEY `idx_cgv_node_type` (`node_type`),
+  KEY `idx_cgv_source_file` (`source_file`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Code graph vertex table';
+
+-- code_graph_edge, structural relationships (contains, calls, imports, etc.)
+CREATE TABLE IF NOT EXISTS `code_graph_edge` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `knowledge_id` varchar(100) NOT NULL COMMENT 'Knowledge space ID',
+  `sid` varchar(500) NOT NULL COMMENT 'Source vertex ID',
+  `tid` varchar(500) NOT NULL COMMENT 'Target vertex ID',
+  `edge_type` varchar(50) NOT NULL DEFAULT 'references' COMMENT 'Edge type (contains, calls, imports, etc.)',
+  `confidence` varchar(20) DEFAULT 'EXTRACTED' COMMENT 'Edge confidence',
+  `source_file` varchar(500) DEFAULT '' COMMENT 'Source file path',
+  `source_location` varchar(30) DEFAULT '' COMMENT 'Source location in file',
+  `props` text DEFAULT NULL COMMENT 'Additional properties JSON',
+  `gmt_create` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+  `gmt_modified` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Record update time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_cge_edge` (`knowledge_id`,`sid`(255),`tid`(255),`edge_type`),
+  KEY `idx_cge_knowledge_id` (`knowledge_id`),
+  KEY `idx_cge_sid` (`sid`),
+  KEY `idx_cge_tid` (`tid`),
+  KEY `idx_cge_edge_type` (`edge_type`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Code graph edge table';
+
+-- code_graph_meta, per-knowledge-space graph metadata (counts, build info)
+CREATE TABLE IF NOT EXISTS `code_graph_meta` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Auto increment id',
+  `knowledge_id` varchar(100) NOT NULL COMMENT 'Knowledge space ID',
+  `vertex_count` int DEFAULT 0 COMMENT 'Vertex count',
+  `edge_count` int DEFAULT 0 COMMENT 'Edge count',
+  `community_count` int DEFAULT 0 COMMENT 'Community count',
+  `build_source` varchar(20) DEFAULT '' COMMENT 'Build source type',
+  `repo_url` varchar(500) DEFAULT '' COMMENT 'Source repository URL',
+  `branch` varchar(100) DEFAULT '' COMMENT 'Source repository branch',
+  `build_status` varchar(20) DEFAULT 'completed' COMMENT 'Build status',
+  `graph_version` int DEFAULT 1 COMMENT 'Graph version',
+  `gmt_create` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+  `gmt_modified` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Record update time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_cgm_knowledge_id` (`knowledge_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Code graph metadata table';
+
+
+
+-- Example database for chat users (moved to end to avoid breaking dbgpt database context)
 CREATE
 DATABASE IF NOT EXISTS EXAMPLE_1;
 use EXAMPLE_1;

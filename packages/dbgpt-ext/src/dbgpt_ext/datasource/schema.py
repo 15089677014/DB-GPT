@@ -24,13 +24,17 @@ class DBType(Enum):
     Oracle = DbInfo("oracle")
     MSSQL = DbInfo("mssql")
     Postgresql = DbInfo("postgresql")
+    GaussDB = DbInfo("gaussdb")
+    openGauss = DbInfo("openGauss")
     Vertica = DbInfo("vertica")
     Clickhouse = DbInfo("clickhouse")
     StarRocks = DbInfo("starrocks")
     Spark = DbInfo("spark", True)
     Doris = DbInfo("doris")
     Hive = DbInfo("hive")
+    MaxCompute = DbInfo("maxcompute")
     TuGraph = DbInfo("tugraph")
+    Neo4j = DbInfo("neo4j")
 
     def value(self) -> str:
         """Return the name of the database type."""

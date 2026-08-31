@@ -48,6 +48,9 @@ class ActionOutput(BaseModel):
     action: Optional[str] = None
     action_input: Optional[str] = None
     thoughts: Optional[str] = None
+    phase: Optional[str] = None
+    action_intention: Optional[str] = None
+    action_reason: Optional[str] = None
     observations: Optional[str] = None
     have_retry: Optional[bool] = True
     ask_user: Optional[bool] = False
@@ -60,6 +63,12 @@ class ActionOutput(BaseModel):
     # Memory fragments of current conversation, we can recover the conversation at any
     # time.
     memory_fragments: Optional[Dict[str, Any]] = None
+    # File path on disk where the full tool result was persisted when it
+    # exceeded the tool-result size threshold. When set, ``content`` holds a
+    # ``<persisted-output>`` preview block and the full output lives at this
+    # path (read back via the ``read_file`` tool). ``observations`` retains the
+    # full content for database persistence.
+    persisted_path: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

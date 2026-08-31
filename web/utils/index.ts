@@ -60,6 +60,14 @@ export const parseResourceValue = (value: any): any[] => {
 
   try {
     // If the value is a string, try to parse it as JSON
+    // Plain strings (e.g. knowledge space names like "知识库1") are not valid JSON,
+    // skip JSON.parse to avoid noisy console errors
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) {
+        return [];
+      }
+    }
     let resourceData = typeof value === 'string' ? JSON.parse(value) : value;
 
     // If resourceData is not an array but an object, convert it to array format

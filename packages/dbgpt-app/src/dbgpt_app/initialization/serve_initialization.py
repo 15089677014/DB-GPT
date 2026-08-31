@@ -27,8 +27,10 @@ def scan_serve_configs():
         "dbgpt_serve.flow",
         "dbgpt_serve.libro",
         "dbgpt_serve.model",
+        "dbgpt_serve.observability",
         "dbgpt_serve.prompt",
         "dbgpt_serve.rag",
+        "dbgpt_serve.connector",  # External connectors serve
     ]
 
     scanner = ModelScanner[BaseServeConfig]()
@@ -129,6 +131,22 @@ def register_serve_apps(
         ),
     )
     # ################################ Conversation Serve Register End ################
+
+    # ################################ Observability Serve Register Begin ############
+    from dbgpt_serve.observability.serve import Serve as ObservabilityServe
+
+    # Register serve app
+    system_app.register(
+        ObservabilityServe,
+        api_prefix="/api/v1/observability",
+        config=get_config(
+            serve_configs,
+            ObservabilityServe.name,
+            dbgpt_serve.observability.serve.ServeConfig,
+            api_keys=global_api_keys,
+        ),
+    )
+    # ################################ Observability Serve Register End ##############
 
     # ################################ AWEL Flow Serve Register Begin #################
     from dbgpt_serve.flow.serve import Serve as FlowServe
@@ -306,3 +324,56 @@ def register_serve_apps(
             api_keys=global_api_keys,
         ),
     )
+
+    # ################################ Connector Serve Register Begin #################
+    from dbgpt_serve.connector.config import ServeConfig as ConnectorServeConfig
+    from dbgpt_serve.connector.serve import ConnectorServe
+
+    # Register serve connector (external MCP connectors)
+    system_app.register(
+        ConnectorServe,
+        config=get_config(
+            serve_configs,
+            ConnectorServe.name,
+            ConnectorServeConfig,
+            api_keys=global_api_keys,
+        ),
+    )
+    # ################################ Connector Serve Register End ###################
+
+    # ######################### Scheduled Task Serve Register Begin ##################
+    from dbgpt_serve.scheduled_task.config import (
+        ServeConfig as ScheduledTaskServeConfig,
+    )
+    from dbgpt_serve.scheduled_task.serve import ScheduledTaskServe
+
+    # Register serve scheduled_task (cron-based chat replay tasks)
+    system_app.register(
+        ScheduledTaskServe,
+        config=get_config(
+            serve_configs,
+            ScheduledTaskServe.name,
+            ScheduledTaskServeConfig,
+            api_keys=global_api_keys,
+        ),
+    )
+    # ######################### Scheduled Task Serve Register End ####################
+
+    # ######################### Session File Serve Register Begin ###################
+    from dbgpt_serve.session_file.config import (
+        ServeConfig as SessionFileServeConfig,
+    )
+    from dbgpt_serve.session_file.serve import SessionFileServe
+
+    # Register serve session_file (owner-aware agent session files)
+    system_app.register(
+        SessionFileServe,
+        api_prefix="/api/v1/agent/files",
+        config=get_config(
+            serve_configs,
+            SessionFileServe.name,
+            SessionFileServeConfig,
+            api_keys=global_api_keys,
+        ),
+    )
+    # ######################### Session File Serve Register End #####################
